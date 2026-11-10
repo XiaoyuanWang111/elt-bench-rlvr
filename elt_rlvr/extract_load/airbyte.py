@@ -124,6 +124,8 @@ class AirbyteSettings:
     custom_definition_id: str | None = None
     destination_resource: str = "airbyte_destination_snowflake"
     destination_configuration: Mapping[str, Any] = field(default_factory=dict, repr=False)
+    uppercase_namespace: bool = True
+    """Whether the destination stores an unquoted schema name in upper case, as Snowflake does."""
     secrets: Mapping[str, str] = field(default_factory=dict, repr=False)
     allowed_locators: tuple[str, ...] = ()
     terraform_command: tuple[str, ...] = ("terraform",)
@@ -241,23 +243,19 @@ class AirbyteEngine(ExtractLoadEngine):
         if connection.source_type == "custom_api":
             source["configuration"] = json.dumps(configuration)
             source["definition_id"] = settings.custom_definition_id
-        provider = {"server_url": settings.provider_server_url}
-        if settings.client_id:
-            provider.update(client_id=settings.client_id, client_secret=settings.client_secret)
-        else:
-            provider.update(username=settings.username, password=settings.password)
+        schema = namespace.upper() if settings.uppercase_namespace else namespace.lower()
         return {
             "terraform": {
                 "required_providers": {"airbyte": {"source": "airbytehq/airbyte", "version": PROVIDER_VERSION}}
             },
-            "provider": {"airbyte": provider},
+            "provider": {"airbyte": self._provider()},
             "resource": {
                 source_resource: {"source": source},
                 settings.destination_resource: {
                     "destination": {
                         "name": f"elt_rlvr_destination_{suffix}",
                         "workspace_id": settings.workspace_id,
-                        "configuration": {**settings.destination_configuration, "schema": namespace.upper()},
+                        "configuration": {**settings.destination_configuration, "schema": schema},
                     }
                 },
                 "airbyte_connection": {
@@ -294,18 +292,45 @@ class AirbyteEngine(ExtractLoadEngine):
         start = next((index for index, line in enumerate(lines) if line.lstrip().startswith("Error:")), 0)
         return self._scrub("\n".join(lines[start : start + 30]))
 
+    def _access_token(self) -> str | None:
+        """A fresh application token, or ``None`` when the deployment is used with a username and password.
+
+        Tokens live for a few minutes, so one is requested for every Terraform run and every API call.
+        """
+        settings = self._settings
+        if not settings.client_id:
+            return None
+        response = httpx.post(
+            f"{settings.api_url}/applications/token",
+            json={
+                "client_id": settings.client_id,
+                "client_secret": settings.client_secret,
+                "grant-type": "client_credentials",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()["access_token"]
+
+    def _provider(self) -> dict[str, Any]:
+        """The provider block: a bearer token when application credentials are configured, else basic auth."""
+        settings = self._settings
+        token = self._access_token()
+        if token:
+            return {"server_url": settings.provider_server_url, "bearer_auth": token}
+        return {
+            "server_url": settings.provider_server_url,
+            "username": settings.username,
+            "password": settings.password,
+        }
+
     def _request(self, method: str, path: str, **arguments: Any) -> dict[str, Any]:
         settings = self._settings
         headers = {"accept": "application/json"}
         auth = None
-        if settings.client_id:
-            token = httpx.post(
-                f"{settings.api_url}/applications/token",
-                json={"client_id": settings.client_id, "client_secret": settings.client_secret},
-                timeout=30,
-            )
-            token.raise_for_status()
-            headers["authorization"] = f"Bearer {token.json()['access_token']}"
+        token = self._access_token()
+        if token:
+            headers["authorization"] = f"Bearer {token}"
         else:
             auth = (settings.username or "", settings.password or "")
         response = httpx.request(
@@ -360,5 +385,7 @@ class AirbyteEngine(ExtractLoadEngine):
             return results
         finally:
             if (directory / "terraform.tfstate").exists():
+                resources["provider"]["airbyte"] = self._provider()
+                (directory / "main.tf.json").write_text(json.dumps(resources), encoding="utf-8")
                 self._terraform(directory, "destroy", "-auto-approve", "-input=false", "-no-color")
             shutil.rmtree(directory, ignore_errors=True)
