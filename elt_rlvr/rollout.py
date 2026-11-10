@@ -126,8 +126,13 @@ async def run(cli_config: CLIConfig) -> list[dict]:
             # Every turn sends the whole conversation again, so prompt tokens add up over the turns.
             "prompt_tokens": sum(transition.ob.length for transition in trajectory.transitions),
             "sampled_tokens": sum(len(transition.ac.tokens) for transition in trajectory.transitions),
+            # Which source tables count as loaded and which required columns are right.
+            "source_tables": grade.source_tables,
+            "model_columns": grade.model_columns,
         }
-        for index, (trajectory, (reward, metrics)) in enumerate(zip(trajectories, graded, strict=True))
+        for index, (trajectory, (reward, metrics), grade) in enumerate(
+            zip(trajectories, graded, builder.grades, strict=True)
+        )
     ]
     log_path = Path(cli_config.log_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)

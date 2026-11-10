@@ -212,6 +212,8 @@ async def test_reference_rollout_command_writes_rewards_and_a_transcript(tmp_pat
     summaries = await rollout.run(config)
 
     assert [summary["reward"] for summary in summaries] == [1.0]
+    assert all(summaries[0]["source_tables"].values())
+    assert all(right for columns in summaries[0]["model_columns"].values() for right in columns.values())
     assert summaries[0]["prompt_tokens"] > summaries[0]["sampled_tokens"] > 0
     records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     assert records[-1]["summary"]["solved"] == 1.0

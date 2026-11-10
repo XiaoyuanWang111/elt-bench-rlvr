@@ -27,7 +27,7 @@ from tinker_cookbook.tool_use import build_agent_tool_env
 
 from elt_rlvr.backend import BackendConfig, build_engine, build_warehouse
 from elt_rlvr.extract_load.base import ExtractLoadEngine
-from elt_rlvr.grading.grader import RewardConfig, grade_group
+from elt_rlvr.grading.grader import Grade, RewardConfig, grade_group
 from elt_rlvr.grading.reference import TaskReference
 from elt_rlvr.prompts import system_prompt, task_message
 from elt_rlvr.session import RolloutSession, SessionLimits
@@ -121,11 +121,14 @@ class ELTEnvGroupBuilder(EnvGroupBuilder):
         self.backend = backend or BackendConfig()
         self.reward = reward or RewardConfig()
         self.episode = episode or EpisodeConfig()
+        self.grades: list[Grade] = []
+        """The grades of the group graded last, in the order of its rollouts: what each reward is made of."""
         self._sessions: dict[int, RolloutSession] = {}
 
     def __getstate__(self) -> dict:
         state = dict(self.__dict__)
         state["_sessions"] = {}
+        state["grades"] = []
         return state
 
     def fresh(self) -> "ELTEnvGroupBuilder":
@@ -184,6 +187,7 @@ class ELTEnvGroupBuilder(EnvGroupBuilder):
         start = time.perf_counter()
         grades = await asyncio.to_thread(grade_group, sessions, runtime.reference, self.reward)
         grading_seconds = (time.perf_counter() - start) / max(len(sessions), 1)
+        self.grades = grades
 
         results: list[tuple[float, Metrics]] = []
         for trajectory, session, grade in zip(trajectory_group, sessions, grades, strict=True):
