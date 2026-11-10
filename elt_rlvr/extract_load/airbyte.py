@@ -450,6 +450,7 @@ class AirbyteEngine(ExtractLoadEngine):
                 raise ConnectionRejectedError(self._terraform_error(result, rendered))
             output = self._terraform(directory, rendered, "output", "-json")
             connection_id = json.loads(output.stdout)["connection_id"]["value"]
+            before = {name.lower(): warehouse.row_count(namespace, name) for name in warehouse.list_tables(namespace)}
             failure = self._run_sync_job(connection_id)
 
             stored = {name.lower(): name for name in warehouse.list_tables(namespace)}
@@ -458,6 +459,9 @@ class AirbyteEngine(ExtractLoadEngine):
                 table = stored.get(table_name_for_stream(stream.name).lower())
                 if failure is None and table is not None:
                     rows = warehouse.row_count(namespace, table)
+                    if stream.sync_mode.endswith("append"):
+                        # The rows this sync added, as the other engines report it.
+                        rows -= before.get(table.lower(), 0)
                     results.append(StreamResult(connection.name, stream.name, table, succeeded=True, rows_loaded=rows))
                 else:
                     error = failure or "the sync job succeeded but did not create the table"
