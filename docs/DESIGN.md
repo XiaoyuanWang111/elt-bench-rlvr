@@ -1,101 +1,108 @@
 # ELT-Bench as a Tinker RLVR environment: implementation design
 
-Repository: `elt-bench-rlvr`. All measurements below are from the code in it.
+Repository: `elt-bench-rlvr`. Numbers come from runs whose commands and outputs are in `logs/`.
 
 ## 1. The ELT task
 
-**Components.** An ELT-Bench task has sources of up to five kinds (Postgres, MongoDB, REST API, S3, flat files), a
-destination warehouse, `config.yaml` with connection values, `data_model.yaml` with the tables to build and a
-description of every column, source schemas, and Airbyte documentation. A solution extracts and loads every source
-table and builds every data model with SQL.
+**Components.** Sources of up to five kinds (Postgres, MongoDB, REST API, S3, flat files), a destination warehouse,
+`config.yaml` with connection values, `data_model.yaml` with the tables to build and a description of every
+column, source schemas, and Airbyte documentation. A solution loads every source table and builds every data
+model with SQL.
 
-**Prompt and tools.** The benchmark gives its agents a shell in a container. For RL the model gets seven typed
-tools: `list_files`, `read_file`, `write_file`, `run_extract_load`, `run_transform`, `query`, `submit`. The model
-writes `pipeline/extract_load.yaml` (connections, connector configuration, streams, sync modes) and one
-`pipeline/models/<table>.sql` per model, runs them, reads the errors and row counts that come back, and submits.
-For official tasks the connector configuration is the `configuration` block of the Airbyte Terraform resource, so
-the benchmark's documentation applies unchanged; the environment renders the resources, applies them and runs the
-sync. A typed interface costs the model no ELT decision (which sources, which fields, which streams, which SQL) and
-removes the shell, which is where most ways to cheat and most of the latency come from.
+**Prompt and tools.** The benchmark gives its agents a shell. For RL the model gets seven typed tools:
+`list_files`, `read_file`, `write_file`, `run_extract_load`, `run_transform`, `query`, `submit`. It writes
+`pipeline/extract_load.yaml` (connections, connector configuration, streams, sync modes) and one SQL file per data
+model, runs them, reads the errors and row counts that come back, and submits. On official tasks the connector
+configuration is the `configuration` block of the Airbyte Terraform resource, so the benchmark's documentation
+applies unchanged. Every ELT decision stays with the model; the shell, where most ways to cheat and most of the
+latency come from, is gone.
 
-**Termination.** `submit`, a turn limit, a token budget, or a wall-clock limit. The reward does not depend on which
-one ended the episode, because it is computed from state.
+**Termination.** `submit`, a turn limit, a token budget or a wall-clock limit. The reward is computed from state,
+so it does not depend on which one ended the episode.
 
-**State.** The environment is stateful: workspace files, Airbyte objects and warehouse tables all change, and a
-sync in append mode is not idempotent. Episodes are made independent instead: each rollout gets its own workspace
-and warehouse namespace, sources are read-only, and everything is dropped at the end. Rollouts of one task
-therefore start from the same state and can run in parallel, which GRPO-style groups need.
+**State.** Stateful: files, Airbyte objects and warehouse tables change, and a sync in append mode is not
+idempotent (a second run doubles the rows). Episodes are independent instead: each rollout has its own workspace
+and warehouse namespace, and sources are read-only. Rollouts of one task start from the same state and run in
+parallel, which GRPO-style groups need.
 
 ## 2. Reward
 
-**Correct pipeline.** Run from an empty namespace, the pipeline (a) loads every source table with exactly the
-source's rows and (b) builds every data model as the correct function of the source data: right on today's data
-and still right when the data changes.
+**Correct pipeline.** Run from an empty namespace, it loads every source table with exactly the source's rows and
+builds every data model as the correct function of the source data: right on today's data and still right when
+the data changes.
 
-**Verification.** Both parts are checked by execution in the warehouse.
+**Verification**, by execution in the warehouse:
 
-- *Extract-load score* `EL`: the share of source tables whose loaded rows equal a reference load, compared by an
-  order-insensitive digest of all rows. The benchmark's stage 1 compares row counts only.
-- *Transform score* `T`: the grader re-runs the submitted model files in a fresh namespace and compares each table
-  with the expected one, column by column after aligning rows on the key. It does this on the original data
-  against the benchmark's ground truth, and on held-out data: random samples of the source tables that keep
-  foreign keys consistent, with the expected output computed by reference SQL. A column counts only if it matches
-  everywhere. Integers and text must be equal; the benchmark's 1% tolerance is kept only as a reported metric.
+- *Extract-load score* `EL`: the share of source tables whose loaded rows equal a reference load (an
+  order-insensitive digest of all rows). The benchmark compares row counts only.
+- *Transform score* `T`: the share of required columns that are right. The grader re-runs the submitted SQL in a
+  fresh namespace and compares each table with the expected one column by column: on the tables the pipeline
+  loaded, against the benchmark's ground truth, and on held-out samples of the source tables, against the output
+  of reference SQL. A column counts only if it matches everywhere. Integers and text must be equal; the
+  benchmark's 1% tolerance is only a reported metric.
 
-`reward = EL * (0.3 + 0.7 * T)`, in [0, 1]. Transformation credit is scaled by `EL` because a model built on
-unverified raw data is not verified either.
+`reward = 0.3 * EL + 0.7 * T`. `T` needs no gate on `EL`: columns are graded on the tables the pipeline itself
+loaded, so a wrong load already costs the columns that depend on it. The benchmark scores transformations only
+after loading succeeds. The shape that mirrors this, `EL * (0.3 + 0.7 * T)`, is one setting, and it discards
+signal: a sampled rollout that loaded every table twice and had a transform score of 0.25 gets 0.175 from the
+sum and 0 from the product.
 
-**Outcome or process reward.** Outcome reward is what ELT supports well, and it can be graded rather than binary,
-because the task has two natural verifiable stages and each model has several columns. That matters for training:
-tinker-cookbook centres the total reward within a group, so a group whose rollouts all score 0 teaches nothing,
-and the benchmark's binary criterion gives almost only such groups. Process reward is limited to what execution
-can verify. The verified milestones (a table loaded, a column right) are already inside the outcome reward, and
-since the advantage is computed per trajectory, paying them earlier would change nothing. Bonuses for events such
-as "a sync succeeded" or "a query ran" can be collected by repeating the event, so there are none; process signals
-are logged as metrics, and an optional per-turn cost is available.
+**Outcome or process reward.** A graded outcome reward. tinker-cookbook centres the total reward within a group,
+so a group whose rollouts all score the same teaches nothing, and the graded reward separates rollouts that the
+benchmark's all-or-nothing criterion scores alike. On the official task `human_resources` a sampled rollout with
+every load right and 14 of 16 columns right earns 0.91 where the criterion gives 0; in the logged optimization
+step the two groups scored (1.0, 0.94, 0.94, 0.88) and (1.0, 1.0, 0.95, 0.95). The milestones that execution can
+verify (a table loaded, a column right) are already in the outcome reward, and paying them earlier would not
+change a per-trajectory advantage. A bonus for an event such as "a sync succeeded" can be collected by repeating
+the event, so there is none.
 
 ## 3. Implementation
 
-The environment is a tinker-cookbook recipe: `ELTEnvGroupBuilder` builds one group of rollouts per task with
-`build_agent_tool_env`, and grades the group in `compute_group_rewards`; `ELTDatasetBuilder` feeds
-`rl.train.main`. Two interfaces carry everything that depends on infrastructure:
+A tinker-cookbook recipe: `ELTEnvGroupBuilder` builds one group of rollouts per task with `build_agent_tool_env`
+and grades it in `compute_group_rewards`; `ELTDatasetBuilder` feeds `rl.train.main`. Two interfaces carry what
+depends on infrastructure: `Warehouse` (DuckDB, Snowflake; a new destination is one subclass) and
+`ExtractLoadEngine` (`LocalEngine`, `AirbyteEngine`).
 
-- `Warehouse` (DuckDB, Snowflake): namespaces, vetted queries, bulk load, table copy and sampling, row digest. A
-  new destination is one subclass.
-- `ExtractLoadEngine` (`LocalEngine`, `AirbyteEngine`): run one connection into a namespace.
-
-The credential-free path uses DuckDB and `LocalEngine` over three generated tasks that have the layout of an
-ELT-Bench task. Tests drive it through the real rollout loop with a scripted policy that emits tokens.
+The credential-free path runs DuckDB and `LocalEngine` on three generated tasks laid out like ELT-Bench tasks;
+tests drive it through the cookbook's rollout loop with a scripted policy that emits tokens. The official path
+was run on Airbyte 2.5 and Snowflake: all 100 tasks load, and on three tasks that together cover the five source
+kinds a reference pipeline earns reward 1.0 against the benchmark's ground truth. Rollouts sampled from
+Qwen3.6-35B-A3B through Tinker earned 1.0 and 0.9 on `trains` and 0.91 on `human_resources`. One defect of the
+benchmark surfaced: its REST API connector never finishes a table of 9,973 rows or more (40 tables in 30 tasks;
+details and a workaround are in the README).
 
 ## 4. Reward hacking
 
-The policy controls only tool arguments; the tools and the grader are trusted. Each item has a test.
+The policy controls only tool arguments. Each row has a test.
 
 | Loophole | Closed by |
 | --- | --- |
-| Hard-code the expected table, or paste looked-up values into SQL | Held-out data. Measured: constants score 1.0 on the original data and 0 after the held-out check. |
-| Leave correct tables behind, submit other SQL | The grader runs the submitted files itself. |
-| Fabricate a source table with the right row count; append a stream twice | Content digest; only engine-written tables count. The row-count check accepts the fabricated table. |
-| Use the loader to fetch the answers (ELT-Bench's ground truth is public) | A source may only name locations in the task's `config.yaml`. |
-| Read grader files or other rollouts' tables | Workspace-confined file tools; SQL is parsed, limited to the rollout's tables, and re-emitted from the syntax tree, so the warehouse never sees unvetted text. DuckDB runs with external access off. |
-| Use warehouse credentials | The destination is provisioned by the environment; secrets reach the model only as placeholders. |
-| Exploit the 1% tolerance, break the grader, exhaust resources | Exact comparison; any grader error gives 0; timeouts and caps. |
+| Hard-code the expected table, or paste looked-up values into SQL | Held-out data: constants score 1.0 on the original data and 0 after the held-out check. |
+| Leave correct tables behind and submit other SQL | The grader runs the submitted files itself. |
+| Fabricate a source table with the right row count; append a stream twice | Content digest; only engine-written tables count. |
+| Load the answers through the loader (the ground truth is public) | A source may name only locations in the task's `config.yaml`. |
+| Read grader files or other rollouts' tables | File tools are confined to the workspace. SQL is parsed, limited to the rollout's tables and re-emitted from the syntax tree. |
+| Use warehouse credentials | Secrets reach the model only as placeholders. |
+| Exploit the 1% tolerance, break the grader, exhaust resources | Exact comparison; a grader error gives 0; timeouts and a sync budget. |
 
-Known limit: held-out grading needs reference SQL for the task, and a column description that admits two
-readings can fail a reasonable solution. Sampling keeps foreign keys intact to avoid penalizing solutions that
-rely on them.
+Known limits. Held-out grading and the content check need a reference pipeline per task. Three official tasks
+have one; the rest fall back to the public ground truth and row counts, where a policy that memorized the
+expected tables would be paid. A column description with two readings can fail a reasonable solution.
 
 ## 5. Efficiency
 
-Measured on the local backend with 25,000 source rows and a group of 8: a file or query tool call takes 1 to
-3 ms, `run_transform` 36 ms, grading 0.19 s per rollout.
+| Mean seconds | Official task (Airbyte, Snowflake) | Local task (DuckDB, 25,000 rows) |
+| --- | --- | --- |
+| `run_extract_load`, synced by the engine | 295 (three connections) | 0.105 |
+| `run_extract_load`, served by the sync cache | 7.6 | 0.030 |
+| `run_transform` | 3.2 | 0.020 |
+| `query` | 0.1 | 0.002 |
+| Grading, per rollout | 8.0 | 0.25 |
 
 - *Sync cache.* A sync depends only on the connection configuration while sources are fixed. Each distinct
-  configuration is synced once into a snapshot; later syncs copy the snapshot inside the warehouse (a zero-copy
-  clone on Snowflake) and reproduce the same rows, duplicates and errors. Locally this cuts `run_extract_load`
-  from 104 ms to 31 ms; with Airbyte it replaces a sync of minutes.
-- *Grading.* The reference load and expected tables are built once per task; held-out samples are drawn once per
-  group, and only if some rollout has a column right; rollouts are graded in parallel; metadata lookups are
-  batched. Together these took grading from 0.49 s to 0.19 s per rollout.
-- *Transitions.* Tools run in worker threads on one shared connection, with no process start per call (no dbt or
-  shell start-up).
+  configuration is synced once into a snapshot; later syncs copy it inside the warehouse (a zero-copy clone on
+  Snowflake) and reproduce the same rows, duplicates and errors. Snapshots persist across runs.
+- *Grading.* The reference load is built once per task and kept (5 minutes, then 4 s). Held-out samples are drawn
+  once per group, and only if some rollout has a column right. Rollouts are graded in parallel.
+- *Transitions.* Tools run in worker threads on one connection, with no dbt or shell start-up per call. What
+  remains is Airbyte: about 100 s per connection, paid once per distinct configuration.
