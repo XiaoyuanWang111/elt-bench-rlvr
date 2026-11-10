@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.errors import SqlglotError
+from sqlglot.errors import ErrorLevel, SqlglotError, UnsupportedError
 
 MAX_SQL_CHARS = 20_000
 
@@ -168,4 +168,10 @@ def vet_query(sql: str, *, dialect: str, table_namespaces: Mapping[str, str]) ->
         if canonical_name not in referenced:
             referenced.append(canonical_name)
 
-    return VettedQuery(sql=root.sql(dialect=dialect), tables=tuple(referenced))
+    try:
+        # Without RAISE, sqlglot drops what it cannot express in the dialect (for example the format argument of
+        # TO_CHAR in DuckDB) and the warehouse would run something other than what the policy wrote.
+        sql = root.sql(dialect=dialect, unsupported_level=ErrorLevel.RAISE)
+    except UnsupportedError as error:
+        raise SqlRejectedError(f"not supported in the {dialect} dialect: {error}") from error
+    return VettedQuery(sql=sql, tables=tuple(referenced))
