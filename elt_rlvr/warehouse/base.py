@@ -79,7 +79,7 @@ class Warehouse(ABC):
 
     @abstractmethod
     def create_table_from_query(self, namespace: str, table: str, sql: str, *, timeout_seconds: float) -> int:
-        """Materialize a vetted SELECT as ``namespace.table`` (replacing it) and return its row count."""
+        """Materialize a vetted SELECT as ``namespace.table`` (replacing it) and return the number of rows written."""
 
     @abstractmethod
     def write_frame(self, namespace: str, table: str, frame: pd.DataFrame, *, append: bool) -> int:

@@ -69,20 +69,22 @@ class DuckDBWarehouse(Warehouse):
 
     def list_tables(self, namespace: str) -> list[str]:
         cursor = self._execute(
-            "SELECT table_name FROM information_schema.tables "
-            f"WHERE table_schema = '{require_identifier(namespace)}' ORDER BY table_name"
+            "SELECT table_name FROM duckdb_tables() "
+            f"WHERE schema_name = '{require_identifier(namespace)}' ORDER BY table_name"
         )
         return [row[0] for row in cursor.fetchall()]
 
     def describe(self, namespace: str, table: str) -> list[Column]:
-        cursor = self._execute(
-            "SELECT column_name, data_type FROM information_schema.columns "
-            f"WHERE table_schema = '{require_identifier(namespace)}' "
-            f"AND lower(table_name) = lower('{require_identifier(table)}') ORDER BY ordinal_position"
-        )
+        # An empty result set carries the column names and types and is much cheaper than a catalog query.
+        source = f"{_quote(require_identifier(namespace))}.{_quote(require_identifier(table))}"
+        cursor = self._execute(f"SELECT * FROM {source} LIMIT 0")
         return [
-            Column(name=name, data_type=data_type, is_numeric=data_type.upper().startswith(NUMERIC_TYPE_PREFIXES))
-            for name, data_type in cursor.fetchall()
+            Column(
+                name=description[0],
+                data_type=str(description[1]).upper(),
+                is_numeric=str(description[1]).upper().startswith(NUMERIC_TYPE_PREFIXES),
+            )
+            for description in cursor.description or ()
         ]
 
     def run_query(self, sql: str, *, max_rows: int, timeout_seconds: float) -> QueryResult:
@@ -93,8 +95,8 @@ class DuckDBWarehouse(Warehouse):
 
     def create_table_from_query(self, namespace: str, table: str, sql: str, *, timeout_seconds: float) -> int:
         target = f"{_quote(require_identifier(namespace))}.{_quote(require_identifier(table))}"
-        self._execute(f"CREATE OR REPLACE TABLE {target} AS {sql}", timeout_seconds=timeout_seconds)
-        return self.row_count(namespace, table)
+        cursor = self._execute(f"CREATE OR REPLACE TABLE {target} AS {sql}", timeout_seconds=timeout_seconds)
+        return int(cursor.fetchone()[0])
 
     def write_frame(self, namespace: str, table: str, frame: pd.DataFrame, *, append: bool) -> int:
         target = f"{_quote(require_identifier(namespace))}.{_quote(require_identifier(table))}"

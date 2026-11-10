@@ -46,9 +46,20 @@ class TableComparison:
         return not self.unmatched and not self.missing
 
 
+TEXT_FRAME_MARK = "elt_rlvr_text_frame"
+
+
 def to_text_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    """Round-trip a table through CSV so that every cell is a string or missing."""
-    return pd.read_csv(io.StringIO(frame.to_csv(index=False)), dtype=str, keep_default_na=True)
+    """Round-trip a table through CSV so that every cell is a string or missing.
+
+    The result is marked, and converting a marked frame again returns it unchanged, so an expected table that is
+    compared many times is converted once.
+    """
+    if frame.attrs.get(TEXT_FRAME_MARK):
+        return frame
+    text_frame = pd.read_csv(io.StringIO(frame.to_csv(index=False)), dtype=str, keep_default_na=True)
+    text_frame.attrs[TEXT_FRAME_MARK] = True
+    return text_frame
 
 
 def _as_numbers(values: pd.Series) -> np.ndarray | None:
@@ -70,17 +81,15 @@ def _numbers_match(expected: np.ndarray, produced: np.ndarray, rule: ValueRule) 
 
 
 def _text_matches(expected: pd.Series, produced: pd.Series, rule: ValueRule) -> bool:
-    for expected_value, produced_value in zip(expected, produced, strict=True):
-        if pd.isna(expected_value) and pd.isna(produced_value):
-            continue
-        if pd.isna(expected_value) or pd.isna(produced_value):
-            return False
-        left, right = str(expected_value).strip(), str(produced_value).strip()
-        if not rule.case_sensitive_text:
-            left, right = left.lower(), right.lower()
-        if left != right:
-            return False
-    return True
+    expected_missing, produced_missing = expected.isna().to_numpy(), produced.isna().to_numpy()
+    if not np.array_equal(expected_missing, produced_missing):
+        return False
+    left = expected.astype("string").str.strip()
+    right = produced.astype("string").str.strip()
+    if not rule.case_sensitive_text:
+        left, right = left.str.lower(), right.str.lower()
+    present = ~expected_missing
+    return bool(np.array_equal(left.to_numpy(dtype=object)[present], right.to_numpy(dtype=object)[present]))
 
 
 def _column_matches(expected: pd.Series, produced: pd.Series, rule: ValueRule) -> bool:

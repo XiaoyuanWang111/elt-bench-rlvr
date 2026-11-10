@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 
 from elt_rlvr.extract_load.base import METADATA_COLUMN_PREFIX, ExtractLoadEngine
+from elt_rlvr.grading.compare import to_text_frame
 from elt_rlvr.pipeline import parse_extract_load, read_models
 from elt_rlvr.task import TaskSpec
 from elt_rlvr.transform import run_models
@@ -32,19 +33,27 @@ class HeldOut:
     expected: dict[str, pd.DataFrame]
 
 
+@dataclass(frozen=True)
+class RawTableCheck:
+    """How a loaded source table compares with the reference load."""
+
+    row_count_matches: bool
+    content_matches: bool
+
+
+@dataclass
+class _ReferenceTable:
+    name: str
+    columns: dict[str, Column]
+    row_count: int
+    fingerprint: TableFingerprint | None = None
+
+
 def source_columns(columns: list[Column]) -> dict[str, Column]:
     """The columns that carry source data, keyed by lower-cased name."""
     return {
         column.name.lower(): column for column in columns if not column.name.lower().startswith(METADATA_COLUMN_PREFIX)
     }
-
-
-def find_table(warehouse: Warehouse, namespace: str, table: str) -> str | None:
-    """The stored name of ``table`` in ``namespace``, matched case-insensitively."""
-    for name in warehouse.list_tables(namespace):
-        if name.lower() == table.lower():
-            return name
-    return None
 
 
 @dataclass
@@ -58,7 +67,7 @@ class TaskReference:
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _built: bool = False
     _expected: dict[str, pd.DataFrame] = field(default_factory=dict)
-    _fingerprints: dict[str, TableFingerprint] = field(default_factory=dict)
+    _tables: dict[str, _ReferenceTable] = field(default_factory=dict)
     _heldout_count: int = 0
 
     def __post_init__(self) -> None:
@@ -68,50 +77,59 @@ class TaskReference:
     def has_pipeline(self) -> bool:
         return self.task.reference_dir is not None
 
-    def _reference_models(self) -> dict[str, str]:
-        assert self.task.reference_dir is not None
-        return read_models(self.task.reference_dir / "models")
-
     def _run_reference_models(self, raw_namespace: str, target_namespace: str) -> dict[str, pd.DataFrame]:
+        assert self.task.reference_dir is not None
         results = run_models(
             self.warehouse,
-            models=self._reference_models(),
-            raw_table_namespaces={table: raw_namespace for table in self.task.source_tables},
+            models=read_models(self.task.reference_dir / "models"),
+            raw_table_namespaces={table.name: raw_namespace for table in self._tables.values()},
             target_namespace=target_namespace,
             timeout_seconds=REFERENCE_TIMEOUT_SECONDS,
+            describe_results=False,
         )
         failed = [f"{result.name}: {result.error}" for result in results if not result.succeeded]
         if failed:
             raise ReferencePipelineError(f"reference models of {self.task.task_id} failed: {'; '.join(failed)}")
-        return {model.name: self.warehouse.read_frame(target_namespace, model.name) for model in self.task.data_models}
+        return {
+            model.name: to_text_frame(self.warehouse.read_frame(target_namespace, model.name))
+            for model in self.task.data_models
+        }
+
+    def _load_reference_tables(self) -> None:
+        assert self.task.reference_dir is not None
+        self.warehouse.create_namespace(self.namespace)
+        config = (self.task.reference_dir / "extract_load.yaml").read_text(encoding="utf-8")
+        for connection in parse_extract_load(config):
+            results = self.engine.sync(connection, warehouse=self.warehouse, namespace=self.namespace)
+            failed = [f"{result.stream}: {result.error}" for result in results if not result.succeeded]
+            if failed:
+                raise ReferencePipelineError(f"reference load of {self.task.task_id} failed: {'; '.join(failed)}")
+        stored_names = {name.lower(): name for name in self.warehouse.list_tables(self.namespace)}
+        missing = [table for table in self.task.source_tables if table.lower() not in stored_names]
+        if missing:
+            raise ReferencePipelineError(f"reference load of {self.task.task_id} did not create: {', '.join(missing)}")
+        for table in self.task.source_tables:
+            name = stored_names[table.lower()]
+            self._tables[table.lower()] = _ReferenceTable(
+                name=name,
+                columns=source_columns(self.warehouse.describe(self.namespace, name)),
+                row_count=self.warehouse.row_count(self.namespace, name),
+            )
 
     def build(self) -> None:
         """Load the reference raw tables and compute the expected outputs. Safe to call repeatedly."""
         with self._lock:
             if self._built:
                 return
+            reference_outputs: dict[str, pd.DataFrame] = {}
             if self.has_pipeline:
-                assert self.task.reference_dir is not None
-                self.warehouse.create_namespace(self.namespace)
-                config = (self.task.reference_dir / "extract_load.yaml").read_text(encoding="utf-8")
-                for connection in parse_extract_load(config):
-                    results = self.engine.sync(connection, warehouse=self.warehouse, namespace=self.namespace)
-                    failed = [f"{result.stream}: {result.error}" for result in results if not result.succeeded]
-                    if failed:
-                        raise ReferencePipelineError(
-                            f"reference load of {self.task.task_id} failed: {'; '.join(failed)}"
-                        )
-                missing = [t for t in self.task.source_tables if find_table(self.warehouse, self.namespace, t) is None]
-                if missing:
-                    raise ReferencePipelineError(
-                        f"reference load of {self.task.task_id} did not create: {', '.join(missing)}"
-                    )
+                self._load_reference_tables()
                 reference_outputs = self._run_reference_models(self.namespace, self.namespace)
-            else:
-                reference_outputs = {}
             if self.task.ground_truth_dir is not None:
                 self._expected = {
-                    model.name: pd.read_csv(self._ground_truth_file(model.name), dtype=str, keep_default_na=True)
+                    model.name: to_text_frame(
+                        pd.read_csv(self._ground_truth_file(model.name), dtype=str, keep_default_na=True)
+                    )
                     for model in self.task.data_models
                 }
             else:
@@ -130,46 +148,43 @@ class TaskReference:
 
     def expected_row_count(self, table: str) -> int | None:
         if self.has_pipeline:
-            stored = find_table(self.warehouse, self.namespace, table)
-            return self.warehouse.row_count(self.namespace, stored) if stored else None
+            return self._tables[table.lower()].row_count
         counts = {name.lower(): count for name, count in (self.task.expected_row_counts or {}).items()}
         return counts.get(table.lower())
 
-    def raw_table_matches(self, namespace: str, table: str) -> bool:
-        """Whether ``namespace.table`` holds exactly the rows of the reference load of ``table``.
+    def check_raw_table(self, namespace: str, table: str, produced_table: str | None) -> RawTableCheck:
+        """Compare the loaded table ``namespace.produced_table`` with the reference load of ``table``.
 
-        Without a reference pipeline only the row count can be checked.
+        The content matches when both tables have the same source columns and the same multiset of rows. Without
+        a reference pipeline only the row count can be checked, and it stands in for the content.
         """
-        produced_table = find_table(self.warehouse, namespace, table)
         if produced_table is None:
-            return False
+            return RawTableCheck(row_count_matches=False, content_matches=False)
         if not self.has_pipeline:
-            return self.warehouse.row_count(namespace, produced_table) == self.expected_row_count(table)
-        reference_table = find_table(self.warehouse, self.namespace, table)
-        assert reference_table is not None
-        produced = source_columns(self.warehouse.describe(namespace, produced_table))
-        reference = source_columns(self.warehouse.describe(self.namespace, reference_table))
-        if set(produced) != set(reference):
-            return False
-        if any(produced[name].is_numeric != reference[name].is_numeric for name in reference):
-            return False
-        numeric = [name for name in reference if reference[name].is_numeric]
-        if table not in self._fingerprints:
-            self._fingerprints[table] = self.warehouse.fingerprint(
-                self.namespace, reference_table, [reference[name].name for name in reference], numeric
-            )
-        fingerprint = self.warehouse.fingerprint(
-            namespace, produced_table, [produced[name].name for name in produced], numeric
-        )
-        return fingerprint == self._fingerprints[table]
+            matches = self.warehouse.row_count(namespace, produced_table) == self.expected_row_count(table)
+            return RawTableCheck(row_count_matches=matches, content_matches=matches)
 
-    def _column_name(self, table: str, column: str) -> str:
-        stored = find_table(self.warehouse, self.namespace, table)
-        assert stored is not None
-        for candidate in self.warehouse.describe(self.namespace, stored):
-            if candidate.name.lower() == column.lower():
-                return candidate.name
-        raise ReferencePipelineError(f"{self.task.task_id}: foreign key names a missing column {table}.{column}")
+        reference = self._tables[table.lower()]
+        produced = source_columns(self.warehouse.describe(namespace, produced_table))
+        same_columns = set(produced) == set(reference.columns) and all(
+            produced[name].is_numeric == column.is_numeric for name, column in reference.columns.items()
+        )
+        if not same_columns:
+            row_count = self.warehouse.row_count(namespace, produced_table)
+            return RawTableCheck(row_count_matches=row_count == reference.row_count, content_matches=False)
+        numeric = [name for name, column in reference.columns.items() if column.is_numeric]
+        with self._lock:
+            if reference.fingerprint is None:
+                reference.fingerprint = self.warehouse.fingerprint(
+                    self.namespace, reference.name, [column.name for column in reference.columns.values()], numeric
+                )
+        fingerprint = self.warehouse.fingerprint(
+            namespace, produced_table, [column.name for column in produced.values()], numeric
+        )
+        return RawTableCheck(
+            row_count_matches=fingerprint.row_count == reference.row_count,
+            content_matches=fingerprint == reference.fingerprint,
+        )
 
     def _parents_first(self) -> list[str]:
         """Source tables ordered so that every table comes after the tables it refers to."""
@@ -178,14 +193,20 @@ class TaskReference:
             if key.table.lower() != key.parent_table.lower():
                 parents[key.table.lower()].add(key.parent_table.lower())
         ordered: list[str] = []
-        remaining = list(self.task.source_tables)
+        remaining = [table.lower() for table in self.task.source_tables]
         while remaining:
-            ready = [table for table in remaining if parents[table.lower()] <= {name.lower() for name in ordered}]
+            ready = [table for table in remaining if parents[table] <= set(ordered)]
             if not ready:
                 raise ReferencePipelineError(f"{self.task.task_id}: foreign keys form a cycle")
             ordered.extend(ready)
             remaining = [table for table in remaining if table not in ready]
         return ordered
+
+    def _column_name(self, table: str, column: str) -> str:
+        columns = self._tables[table.lower()].columns
+        if column.lower() not in columns:
+            raise ReferencePipelineError(f"{self.task.task_id}: foreign key names a missing column {table}.{column}")
+        return columns[column.lower()].name
 
     def draw_heldout(self, seed: int, sample_percent: float) -> HeldOut:
         """Sample the reference raw tables and run the reference models on the sample.
@@ -195,28 +216,25 @@ class TaskReference:
         empty would let an empty model pass, so it is redrawn.
         """
         if not self.has_pipeline:
-            raise ReferencePipelineError(
-                f"task {self.task.task_id} has no reference pipeline to grade held-out data with"
-            )
+            raise ReferencePipelineError(f"task {self.task.task_id} has no reference pipeline for held-out grading")
         with self._lock:
             self._heldout_count += 1
             namespace = f"{self.namespace}_heldout_{self._heldout_count}"
         for attempt in range(MAX_HELDOUT_DRAWS):
             self.warehouse.create_namespace(namespace)
             for table in self._parents_first():
-                stored = find_table(self.warehouse, self.namespace, table)
-                assert stored is not None
+                stored = self._tables[table].name
                 self.warehouse.copy_table(
                     self.namespace, stored, namespace, sample_percent=sample_percent, seed=seed + attempt
                 )
                 for key in self.task.foreign_keys:
-                    if key.table.lower() != table.lower() or key.parent_table.lower() == table.lower():
+                    if key.table.lower() != table or key.parent_table.lower() == table:
                         continue
                     self.warehouse.delete_orphans(
                         namespace,
                         stored,
-                        self._column_name(stored, key.column),
-                        parent_table=find_table(self.warehouse, self.namespace, key.parent_table) or key.parent_table,
+                        self._column_name(key.table, key.column),
+                        parent_table=self._tables[key.parent_table.lower()].name,
                         parent_column=self._column_name(key.parent_table, key.parent_column),
                         original_namespace=self.namespace,
                     )

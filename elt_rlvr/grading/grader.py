@@ -12,14 +12,16 @@ Any failure inside the grader gives reward 0 for that rollout.
 
 import logging
 import random
+import threading
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Literal
 
 import pandas as pd
 
 from elt_rlvr.grading.compare import OFFICIAL, STRICT, compare_tables
-from elt_rlvr.grading.reference import HeldOut, TaskReference, find_table
+from elt_rlvr.grading.reference import HeldOut, TaskReference
 from elt_rlvr.pipeline import MODELS_DIRECTORY, PipelineError, read_models
 from elt_rlvr.session import RolloutSession
 from elt_rlvr.transform import run_models
@@ -42,7 +44,8 @@ class RewardConfig:
     heldout_sample_percent: float = 70.0
     turn_cost: float = 0.0
     """Subtracted from the reward for every assistant turn."""
-    grading_timeout_seconds: float = 300.0
+    grading_threads: int = 8
+    """Rollouts of a group graded at the same time."""
 
 
 @dataclass(frozen=True)
@@ -84,12 +87,39 @@ def combine(extract_load_score: float, transform_score: float, config: RewardCon
     return extract_load_score * (weight + (1 - weight) * transform_score)
 
 
+class _HeldOutSamples:
+    """The held-out samples of one group, drawn when the first rollout needs them.
+
+    A group in which no rollout gets a column right on the original data never pays for the samples.
+    """
+
+    def __init__(self, reference: TaskReference, config: RewardConfig, seed: int | None) -> None:
+        self._reference = reference
+        self._config = config
+        self._rng = random.Random(seed)
+        self._lock = threading.Lock()
+        self._samples: list[HeldOut] | None = None
+
+    def get(self) -> list[HeldOut]:
+        with self._lock:
+            if self._samples is None:
+                self._samples = []
+                if self._reference.has_pipeline:
+                    for _ in range(self._config.heldout_samples):
+                        seed = self._rng.randrange(2**31)
+                        self._samples.append(self._reference.draw_heldout(seed, self._config.heldout_sample_percent))
+            return self._samples
+
+    def drop(self) -> None:
+        for sample in self._samples or []:
+            self._reference.drop_heldout(sample)
+
+
 def _replay_models(
     session: RolloutSession,
     models: Mapping[str, str],
     raw_table_namespaces: Mapping[str, str],
     namespace: str,
-    timeout_seconds: float,
 ) -> dict[str, pd.DataFrame]:
     """Run the submitted models in a fresh namespace and return the tables that were built, by lower-cased name."""
     warehouse = session.warehouse
@@ -100,7 +130,8 @@ def _replay_models(
             models=models,
             raw_table_namespaces=raw_table_namespaces,
             target_namespace=namespace,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=session.limits.statement_timeout_seconds,
+            describe_results=False,
         )
         return {
             result.name.lower(): warehouse.read_frame(namespace, result.name) for result in results if result.succeeded
@@ -109,32 +140,27 @@ def _replay_models(
         warehouse.drop_namespace(namespace)
 
 
-def _grade(
-    session: RolloutSession, reference: TaskReference, heldouts: Sequence[HeldOut], config: RewardConfig
-) -> Grade:
+def _grade(session: RolloutSession, reference: TaskReference, heldouts: _HeldOutSamples, config: RewardConfig) -> Grade:
     task, warehouse = session.task, session.warehouse
 
-    # Only a table the extract-load engine wrote can count as loaded; a model with a source table's name cannot.
-    loaded = {table.lower() for table in session.raw_tables}
-    source_tables = {
-        table: table.lower() in loaded and reference.raw_table_matches(session.namespace, table)
+    stored_tables = {name.lower(): name for name in warehouse.list_tables(session.namespace)}
+    checks = {
+        table: reference.check_raw_table(session.namespace, table, stored_tables.get(table.lower()))
         for table in task.source_tables
     }
+    # Only a table the extract-load engine wrote can count as loaded; a model with a source table's name cannot.
+    loaded = {table.lower() for table in session.raw_tables}
+    source_tables = {table: table.lower() in loaded and check.content_matches for table, check in checks.items()}
     extract_load_score = sum(source_tables.values()) / len(source_tables)
-    official_extract_load = all(
-        (stored := find_table(warehouse, session.namespace, table)) is not None
-        and warehouse.row_count(session.namespace, stored) == reference.expected_row_count(table)
-        for table in task.source_tables
-    )
+    official_extract_load = all(check.row_count_matches for check in checks.values())
 
     try:
         models = read_models(session.workspace / MODELS_DIRECTORY)
     except PipelineError:
         models = {}
-    timeout = session.limits.statement_timeout_seconds
     replay_namespace = f"grade_{session.namespace}"
     produced = _replay_models(
-        session, models, {table: session.namespace for table in session.raw_tables}, replay_namespace, timeout
+        session, models, {table: session.namespace for table in session.raw_tables}, replay_namespace
     )
 
     matched: dict[str, set[str]] = {}
@@ -145,32 +171,36 @@ def _grade(
             matched[model.name] = set()
             continue
         expected = reference.expected(model.name)
-        matched[model.name] = set(
-            compare_tables(expected, frame, key=model.key, required_columns=model.columns, rule=STRICT).matched
+        strict = compare_tables(expected, frame, key=model.key, required_columns=model.columns, rule=STRICT)
+        matched[model.name] = set(strict.matched)
+        # Whatever the strict rule accepts, the benchmark's looser rule accepts too.
+        official_matches += (
+            strict.is_full_match
+            or compare_tables(
+                expected, frame, key=model.key, required_columns=model.columns, rule=OFFICIAL
+            ).is_full_match
         )
-        official = compare_tables(expected, frame, key=model.key, required_columns=model.columns, rule=OFFICIAL)
-        official_matches += official.is_full_match
     original_score = sum(len(matched[model.name]) / len(model.columns) for model in task.data_models) / len(
         task.data_models
     )
 
-    for index, heldout in enumerate(heldouts):
-        produced_heldout = _replay_models(
-            session,
-            models,
-            {table: heldout.namespace for table in task.source_tables},
-            f"{replay_namespace}_heldout_{index}",
-            timeout,
-        )
-        for model in task.data_models:
-            frame = produced_heldout.get(model.name.lower())
-            if frame is None:
-                matched[model.name] = set()
-                continue
-            comparison = compare_tables(
-                heldout.expected[model.name], frame, key=model.key, required_columns=model.columns, rule=STRICT
+    if any(matched.values()):
+        for index, heldout in enumerate(heldouts.get()):
+            produced_heldout = _replay_models(
+                session,
+                models,
+                {table: heldout.namespace for table in task.source_tables},
+                f"{replay_namespace}_heldout_{index}",
             )
-            matched[model.name] &= set(comparison.matched)
+            for model in task.data_models:
+                frame = produced_heldout.get(model.name.lower())
+                if frame is None:
+                    matched[model.name] = set()
+                    continue
+                comparison = compare_tables(
+                    heldout.expected[model.name], frame, key=model.key, required_columns=model.columns, rule=STRICT
+                )
+                matched[model.name] &= set(comparison.matched)
 
     model_columns = {
         model.name: {column: column in matched[model.name] for column in model.columns} for model in task.data_models
@@ -190,6 +220,16 @@ def _grade(
     )
 
 
+def _grade_or_zero(
+    session: RolloutSession, reference: TaskReference, heldouts: _HeldOutSamples, config: RewardConfig
+) -> Grade:
+    try:
+        return _grade(session, reference, heldouts, config)
+    except Exception as error:
+        logger.exception("grading failed for %s", session.namespace)
+        return Grade(0.0, 0.0, 0.0, grader_error=f"{type(error).__name__}: {error}")
+
+
 def grade_group(
     sessions: Sequence[RolloutSession],
     reference: TaskReference,
@@ -199,6 +239,8 @@ def grade_group(
 ) -> list[Grade]:
     """Grade the rollouts of one group against the same held-out samples.
 
+    The rollouts are graded in parallel threads; the warehouse does the heavy work outside the interpreter lock.
+
     Args:
         sessions: The finished rollouts of one task.
         reference: The task's reference state.
@@ -207,22 +249,9 @@ def grade_group(
             hidden data.
     """
     reference.build()
-    rng = random.Random(seed)
-    heldouts: list[HeldOut] = []
-    if reference.has_pipeline:
-        heldouts = [
-            reference.draw_heldout(rng.randrange(2**31), config.heldout_sample_percent)
-            for _ in range(config.heldout_samples)
-        ]
-    grades: list[Grade] = []
+    heldouts = _HeldOutSamples(reference, config, seed)
     try:
-        for session in sessions:
-            try:
-                grades.append(_grade(session, reference, heldouts, config))
-            except Exception as error:
-                logger.exception("grading failed for %s", session.namespace)
-                grades.append(Grade(0.0, 0.0, 0.0, grader_error=f"{type(error).__name__}: {error}"))
+        with ThreadPoolExecutor(max_workers=min(config.grading_threads, max(len(sessions), 1))) as pool:
+            return list(pool.map(lambda session: _grade_or_zero(session, reference, heldouts, config), sessions))
     finally:
-        for heldout in heldouts:
-            reference.drop_heldout(heldout)
-    return grades
+        heldouts.drop()

@@ -26,6 +26,7 @@ def run_models(
     target_namespace: str,
     timeout_seconds: float,
     only: Collection[str] | None = None,
+    describe_results: bool = True,
 ) -> list[ModelResult]:
     """Materialize ``models`` into ``target_namespace``.
 
@@ -39,6 +40,7 @@ def run_models(
         target_namespace: Namespace the model tables are created in.
         timeout_seconds: Limit for each model's statement.
         only: Model names to run; their dependencies run too. ``None`` runs every model.
+        describe_results: Report each built table's columns. The grader turns this off to save a query per model.
     """
     raw_names = {name.lower() for name in raw_table_namespaces}
     table_namespaces = dict(raw_table_namespaces)
@@ -83,13 +85,16 @@ def run_models(
         for dependency in dependencies[name]:
             outcome = materialize(dependency, (*ancestors, name))
             if not outcome.succeeded:
-                results[name] = ModelResult(name, succeeded=False, error=f"depends on failed model {dependency!r}")
+                error = f"depends on model {dependency!r}, which failed: {outcome.error}"
+                results[name] = ModelResult(name, succeeded=False, error=error)
                 return results[name]
         try:
             rows = warehouse.create_table_from_query(
                 target_namespace, name, vetted[name], timeout_seconds=timeout_seconds
             )
-            columns = tuple(column.name for column in warehouse.describe(target_namespace, name))
+            columns: tuple[str, ...] = ()
+            if describe_results:
+                columns = tuple(column.name for column in warehouse.describe(target_namespace, name))
             results[name] = ModelResult(name, succeeded=True, rows=rows, columns=columns)
         except WarehouseError as error:
             results[name] = ModelResult(name, succeeded=False, error=str(error))
