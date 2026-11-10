@@ -23,7 +23,9 @@ Take the real values from `config.yaml`. Its key names are not always the connec
 `documentation/source_<type>.md` files list the fields each source type accepts. See `documentation/connection.md`
 for streams and sync modes.
 
-`run_extract_load` runs every connection once and reports, per stream, the rows loaded or the error.
+`run_extract_load` runs every connection once and reports, per stream, the rows loaded or the error. Pass
+`connections` to run only the named ones, for example to retry one that failed: running a connection again in an
+append mode loads its rows again.
 
 ## pipeline/models/<model>.sql
 

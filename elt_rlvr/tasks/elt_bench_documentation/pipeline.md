@@ -40,7 +40,8 @@ the documentation are examples; do not copy them. A secret appears in `config.ya
 substitutes the secret when it runs the connection.
 
 `run_extract_load` runs every connection once and reports, per stream, the rows loaded or the error. A sync takes
-minutes. Running a connection again in an append mode loads its rows again.
+minutes. Pass `connections` to run only the named ones, for example to retry one that failed: running a connection
+again in an append mode loads its rows again.
 
 ## pipeline/models/<model>.sql
 

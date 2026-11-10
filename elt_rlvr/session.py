@@ -149,7 +149,10 @@ class RolloutSession:
 
         return self._call("write_file", action)
 
-    def run_extract_load(self) -> dict[str, Any]:
+    def run_extract_load(self, connections: list[str] | None = None) -> dict[str, Any]:
+        """Sync the connections of the extract-load file, or only the named ones."""
+        selected = connections
+
         def action() -> dict[str, Any]:
             if self.extract_load_runs >= self.limits.max_extract_load_runs:
                 raise ToolError(f"extract-load can run at most {self.limits.max_extract_load_runs} times per episode")
@@ -157,6 +160,12 @@ class RolloutSession:
             if not config_file.is_file():
                 raise ToolError(f"{EXTRACT_LOAD_PATH} does not exist")
             connections = parse_extract_load(config_file.read_text(encoding="utf-8"))
+            if selected:
+                unknown = sorted(set(selected) - {connection.name for connection in connections})
+                if unknown:
+                    names = ", ".join(connection.name for connection in connections)
+                    raise ToolError(f"no connection named: {', '.join(unknown)}; connections in the file: {names}")
+                connections = [connection for connection in connections if connection.name in selected]
             self.extract_load_runs += 1
             report = []
             for connection in connections:
