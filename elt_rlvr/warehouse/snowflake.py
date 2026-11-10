@@ -172,6 +172,21 @@ class SnowflakeWarehouse(Warehouse):
             f"AND {key} NOT IN (SELECT {parent_key} FROM {kept} WHERE {parent_key} IS NOT NULL)"
         )
 
+    def delete_children_of_one_parent(
+        self, namespace: str, table: str, column: str, *, parent_table: str, parent_column: str, seed: int
+    ) -> None:
+        child, parent = self._table(namespace, table), self._table(namespace, parent_table)
+        key, parent_key = _quote(column), _quote(parent_column)
+        self._run(
+            f"DELETE FROM {child} WHERE {key} IN ("
+            "SELECT referred FROM ("
+            f"SELECT referred, ROW_NUMBER() OVER (ORDER BY HASH(referred, {int(seed)}), referred) AS choice, "
+            "COUNT(*) OVER () AS parents "
+            f"FROM (SELECT DISTINCT {key} AS referred FROM {child} "
+            f"WHERE {key} IN (SELECT {parent_key} FROM {parent} WHERE {parent_key} IS NOT NULL))"
+            ") WHERE choice = 1 AND parents > 1)"
+        )
+
     def fingerprint(
         self, namespace: str, table: str, columns: Sequence[str], numeric_columns: Collection[str]
     ) -> TableFingerprint:

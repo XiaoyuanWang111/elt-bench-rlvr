@@ -156,6 +156,22 @@ class DuckDBWarehouse(Warehouse):
             f"AND {key} NOT IN (SELECT {parent_key} FROM {kept} WHERE {parent_key} IS NOT NULL)"
         )
 
+    def delete_children_of_one_parent(
+        self, namespace: str, table: str, column: str, *, parent_table: str, parent_column: str, seed: int
+    ) -> None:
+        child = f"{_quote(require_identifier(namespace))}.{_quote(require_identifier(table))}"
+        parent = f"{_quote(namespace)}.{_quote(require_identifier(parent_table))}"
+        key, parent_key = _quote(column), _quote(parent_column)
+        self._execute(
+            f"DELETE FROM {child} WHERE {key} IN ("
+            "SELECT referred FROM ("
+            f"SELECT referred, row_number() OVER (ORDER BY hash(referred, {int(seed)}), referred) AS choice, "
+            "count(*) OVER () AS parents "
+            f"FROM (SELECT DISTINCT {key} AS referred FROM {child} "
+            f"WHERE {key} IN (SELECT {parent_key} FROM {parent} WHERE {parent_key} IS NOT NULL))"
+            ") WHERE choice = 1 AND parents > 1)"
+        )
+
     def fingerprint(
         self, namespace: str, table: str, columns: Sequence[str], numeric_columns: Collection[str]
     ) -> TableFingerprint:

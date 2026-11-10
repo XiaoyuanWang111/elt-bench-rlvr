@@ -116,6 +116,23 @@ def test_failed_held_out_draw_fails_every_rollout_that_needs_the_samples(local_t
     assert all("held-out samples could not be drawn" in grade.grader_error for grade in grades)
 
 
+@pytest.mark.parametrize("seed", [1, 2, 3])
+def test_every_held_out_sample_has_a_parent_that_lost_its_children(seed, local_tasks, warehouse, workspace):
+    task = local_tasks["library"]
+    reference = TaskReference(task, warehouse, open_session(task, warehouse, workspace).engine)
+    reference.build()
+
+    def borrowers(namespace: str) -> int:
+        sql = f"select count(distinct member_id) from {namespace}.loans"
+        return warehouse.run_query(sql, max_rows=1, timeout_seconds=10).rows[0][0]
+
+    # With every row kept, the only difference from the original data is the member whose loans are removed.
+    heldout = reference.draw_heldout(seed, sample_percent=100.0)
+
+    assert borrowers(heldout.namespace) == borrowers(reference.namespace) - 1
+    assert warehouse.row_count(heldout.namespace, "members") == warehouse.row_count(reference.namespace, "members")
+
+
 def test_model_table_of_the_wrong_size_is_never_fetched(local_tasks, warehouse, workspace, monkeypatch):
     task = local_tasks["library"]
     session = open_session(task, warehouse, workspace)

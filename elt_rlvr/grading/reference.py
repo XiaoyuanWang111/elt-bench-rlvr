@@ -233,8 +233,11 @@ class TaskReference:
         """Sample the reference raw tables and run the reference models on the sample.
 
         Each table keeps a random share of its rows. A row that refers to a dropped parent row is dropped too, so
-        the sample satisfies every foreign key the original data satisfies. A draw on which some expected table is
-        empty would let an empty model pass, so it is redrawn.
+        the sample satisfies every foreign key the original data satisfies. For every foreign key, one parent row
+        then loses all the rows that refer to it. A parent without children is the case that tells an outer join
+        from an inner one, and a NULL that was kept from one that was replaced; a random sample holds it only by
+        chance, and the same submission would then earn different rewards in different groups. A draw on which
+        some expected table is empty would let an empty model pass, so it is redrawn.
         """
         if not self.has_pipeline:
             raise ReferencePipelineError(f"task {self.task.task_id} has no reference pipeline for held-out grading")
@@ -252,13 +255,16 @@ class TaskReference:
                     for key in self.task.foreign_keys:
                         if key.table.lower() != table or key.parent_table.lower() == table:
                             continue
+                        relation = {
+                            "parent_table": self._tables[key.parent_table.lower()].name,
+                            "parent_column": self._column_name(key.parent_table, key.parent_column),
+                        }
+                        column = self._column_name(key.table, key.column)
                         self.warehouse.delete_orphans(
-                            namespace,
-                            stored,
-                            self._column_name(key.table, key.column),
-                            parent_table=self._tables[key.parent_table.lower()].name,
-                            parent_column=self._column_name(key.parent_table, key.parent_column),
-                            original_namespace=self.namespace,
+                            namespace, stored, column, original_namespace=self.namespace, **relation
+                        )
+                        self.warehouse.delete_children_of_one_parent(
+                            namespace, stored, column, seed=seed + attempt, **relation
                         )
                 expected = self._run_reference_models(namespace, namespace)
                 if all(len(frame) > 0 for frame in expected.values()):

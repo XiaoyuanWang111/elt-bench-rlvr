@@ -125,6 +125,17 @@ class Warehouse(ABC):
         """
 
     @abstractmethod
+    def delete_children_of_one_parent(
+        self, namespace: str, table: str, column: str, *, parent_table: str, parent_column: str, seed: int
+    ) -> None:
+        """Delete every row of ``namespace.table`` that refers to one parent row, chosen by ``seed``.
+
+        The parent is chosen among the ``parent_column`` values of ``namespace.parent_table`` that some row of
+        ``table`` refers to through ``column``. With fewer than two such values nothing is deleted, so the table
+        is never emptied.
+        """
+
+    @abstractmethod
     def fingerprint(
         self, namespace: str, table: str, columns: Sequence[str], numeric_columns: Collection[str]
     ) -> TableFingerprint:

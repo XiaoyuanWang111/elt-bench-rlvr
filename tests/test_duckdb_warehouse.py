@@ -223,6 +223,44 @@ def test_delete_orphans_drops_children_of_removed_parents_only(db):
     assert sorted(db.read_frame(OTHER, "orders")["order_id"].tolist()) == [10, 12, 13, 14]
 
 
+def _orders_after_one_customer_lost_its_orders(db, customer_ids: list, seed: int) -> list:
+    _write(db, NS, "customers", [(1, "a"), (2, "b"), (3, "c")])
+    orders = pd.DataFrame(
+        {"order_id": range(10, 10 + len(customer_ids)), "customer_id": pd.array(customer_ids, "Int64")}
+    )
+    db.write_frame(NS, "orders", orders, append=False)
+
+    db.delete_children_of_one_parent(
+        NS, "orders", "customer_id", parent_table="customers", parent_column="id", seed=seed
+    )
+
+    frame = db.read_frame(NS, "orders").sort_values("order_id")
+    return [None if pd.isna(value) else int(value) for value in frame["customer_id"]]
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_delete_children_of_one_parent_removes_every_row_of_exactly_one_parent(seed, db):
+    remaining = _orders_after_one_customer_lost_its_orders(db, [1, 1, 2, 2, 2, 3, 4, None], seed)
+
+    # Customer 4 is not in the parent table and a NULL key has no parent, so neither can be the one chosen.
+    assert remaining.count(None) == 1 and remaining.count(4) == 1
+    kept = [value for value in remaining if value in (1, 2, 3)]
+    assert kept in ([1, 1, 2, 2, 2], [1, 1, 3], [2, 2, 2, 3])
+
+
+def test_delete_children_of_one_parent_chooses_by_seed(db):
+    chosen = set()
+    for seed in range(12):
+        remaining = _orders_after_one_customer_lost_its_orders(db, [1, 2, 3], seed)
+        chosen |= {1, 2, 3} - set(remaining)
+
+    assert len(chosen) > 1
+
+
+def test_delete_children_of_one_parent_keeps_the_rows_of_an_only_parent(db):
+    assert _orders_after_one_customer_lost_its_orders(db, [2, 2, 4], seed=0) == [2, 2, 4]
+
+
 # ---- fingerprints ------------------------------------------------------------------------------------------------
 
 ROWS = [(1, "x"), (2, "y"), (3, "z")]
