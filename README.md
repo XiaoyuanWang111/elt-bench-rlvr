@@ -100,6 +100,23 @@ Settings read from the environment:
 
 No credential is stored in this repository or written to a run's logged configuration.
 
+Two optional ways to sign in:
+
+- *Airbyte with application tokens.* Airbyte 2.x accepts only bearer tokens on its API; the username and password
+  that ELT-Bench's documentation passes to Terraform and `curl` are answered with 401. Set
+  `ELT_RLVR_AIRBYTE_CLIENT_ID` and `ELT_RLVR_AIRBYTE_CLIENT_SECRET` to the values `abctl local credentials` prints,
+  and the engine requests a token for each Terraform run and API call.
+- *Snowflake with a key pair.* If `snowflake_credential.json` has a `private_key_file` entry, the environment and
+  the Airbyte destination both sign in as that user with that key, and no Snowflake password is needed.
+
+Notes from setting ELT-Bench up on a new machine (Ubuntu 24.04, November 2026):
+
+- `localstack/localstack:latest` exits without a licence token, so the S3 sources do not come up. Pinning the image
+  in `elt-docker/docker-compose.yml` to `localstack/localstack:3.8.1` works.
+- `mongo:8.0` does not start on Linux kernels 6.19 and newer.
+- Airbyte 2.5 asks for four CPUs per sync job. On a machine with four CPUs the job stays pending; install with
+  `abctl local install --low-resource-mode`.
+
 ## 3. Tinker RL optimization step
 
 ```bash
@@ -130,7 +147,7 @@ the pipeline.
 | `read_csv`, `COPY`, `ATTACH`, DDL, DML, several statements | Rejected by the SQL guard; DuckDB also runs with external access off and a locked configuration. |
 | Rely on the benchmark's 1% numeric tolerance | Integers and text must be equal; other numbers may differ by a relative 1e-6. |
 | Terraform template in a connector field | Escaped before rendering. |
-| Read a secret from an error message | Secrets appear to the model as placeholders and are removed from returned errors. |
+| Read a secret or the API token from an error message | Secrets appear to the model as placeholders, reach Terraform as sensitive variables, and are removed from returned errors. |
 | Make the grader fail | Any grader error gives reward 0. |
 | Run away with time or output | Statement timeout, row and file limits, a cap on sync runs. |
 
