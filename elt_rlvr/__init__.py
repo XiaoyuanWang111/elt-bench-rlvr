@@ -1,1 +1,1 @@
-﻿"""A Tinker RLVR environment for ELT-Bench."""
+"""A Tinker RLVR environment for ELT-Bench."""
