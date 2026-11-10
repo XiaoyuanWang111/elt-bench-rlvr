@@ -1,0 +1,63 @@
+{
+  "task": "storefront",
+  "warehouse": "duckdb",
+  "scale": 50,
+  "heldout_samples": 2,
+  "source_rows": {
+    "customers": 3000,
+    "orders": 15000,
+    "products": 1000,
+    "reviews": 6000
+  },
+  "reference_build_seconds": 0.203,
+  "runs": [
+    {
+      "cache_syncs": false,
+      "rollouts": 8,
+      "grading_seconds_per_rollout": 0.244,
+      "tool_seconds_mean": {
+        "read_file": 0.0002,
+        "write_file": 0.0002,
+        "run_extract_load": 0.1046,
+        "run_transform": 0.0199,
+        "query": 0.0016,
+        "submit": 0.0
+      },
+      "extract_load_seconds": [
+        0.122,
+        0.112,
+        0.101,
+        0.095,
+        0.119,
+        0.094,
+        0.096,
+        0.098
+      ]
+    },
+    {
+      "cache_syncs": true,
+      "rollouts": 8,
+      "grading_seconds_per_rollout": 0.254,
+      "tool_seconds_mean": {
+        "read_file": 0.0003,
+        "write_file": 0.0002,
+        "run_extract_load": 0.0297,
+        "run_transform": 0.02,
+        "query": 0.0015,
+        "submit": 0.0
+      },
+      "extract_load_seconds": [
+        0.111,
+        0.02,
+        0.018,
+        0.018,
+        0.018,
+        0.017,
+        0.018,
+        0.018
+      ],
+      "snapshot_hits": 21,
+      "snapshot_misses": 3
+    }
+  ]
+}

@@ -1,0 +1,218 @@
+{
+  "learning_rate": 1e-05,
+  "dataset_builder": {
+    "tasks": [
+      {
+        "task_id": "storefront",
+        "workspace_dir": "<class 'pathlib.PosixPath'>",
+        "source_tables": [
+          "customers",
+          "orders",
+          "products",
+          "reviews"
+        ],
+        "data_models": [
+          {
+            "name": "customers_summary",
+            "columns": [
+              "customer_id",
+              "name",
+              "num_orders",
+              "total_spent",
+              "has_large_order"
+            ],
+            "key": [
+              "customer_id"
+            ]
+          },
+          {
+            "name": "products_summary",
+            "columns": [
+              "product_id",
+              "product_name",
+              "units_sold",
+              "num_reviews",
+              "avg_stars",
+              "top_buyer"
+            ],
+            "key": [
+              "product_id"
+            ]
+          }
+        ],
+        "engine_kind": "local",
+        "engine_options": {
+          "sources_root": "~/.cache/elt_rlvr/tasks/storefront/sources"
+        },
+        "reference_dir": "<class 'pathlib.PosixPath'>",
+        "ground_truth_dir": null,
+        "expected_row_counts": null,
+        "foreign_keys": [
+          {
+            "table": "orders",
+            "column": "customer_id",
+            "parent_table": "customers",
+            "parent_column": "customer_id"
+          },
+          {
+            "table": "orders",
+            "column": "product_id",
+            "parent_table": "products",
+            "parent_column": "product_id"
+          },
+          {
+            "table": "reviews",
+            "column": "product_id",
+            "parent_table": "products",
+            "parent_column": "product_id"
+          }
+        ]
+      },
+      {
+        "task_id": "clinic",
+        "workspace_dir": "<class 'pathlib.PosixPath'>",
+        "source_tables": [
+          "patients",
+          "visits",
+          "doctors",
+          "departments",
+          "lab_results"
+        ],
+        "data_models": [
+          {
+            "name": "doctors_summary",
+            "columns": [
+              "doctor_id",
+              "full_name",
+              "department_name",
+              "num_visits",
+              "pct_follow_up",
+              "busiest_month",
+              "above_department_average"
+            ],
+            "key": [
+              "doctor_id"
+            ]
+          },
+          {
+            "name": "departments_summary",
+            "columns": [
+              "department_id",
+              "department_name",
+              "num_doctors",
+              "num_patients",
+              "total_fees",
+              "avg_glucose"
+            ],
+            "key": [
+              "department_id"
+            ]
+          }
+        ],
+        "engine_kind": "local",
+        "engine_options": {
+          "sources_root": "~/.cache/elt_rlvr/tasks/clinic/sources"
+        },
+        "reference_dir": "<class 'pathlib.PosixPath'>",
+        "ground_truth_dir": null,
+        "expected_row_counts": null,
+        "foreign_keys": [
+          {
+            "table": "doctors",
+            "column": "department_id",
+            "parent_table": "departments",
+            "parent_column": "department_id"
+          },
+          {
+            "table": "visits",
+            "column": "doctor_id",
+            "parent_table": "doctors",
+            "parent_column": "doctor_id"
+          },
+          {
+            "table": "visits",
+            "column": "patient_id",
+            "parent_table": "patients",
+            "parent_column": "patient_id"
+          },
+          {
+            "table": "lab_results",
+            "column": "visit_id",
+            "parent_table": "visits",
+            "parent_column": "visit_id"
+          }
+        ]
+      }
+    ],
+    "model_name": "Qwen/Qwen3.6-35B-A3B",
+    "batch_size": 2,
+    "group_size": 4,
+    "renderer_name": "qwen3_5",
+    "backend": {
+      "warehouse": "duckdb",
+      "warehouse_options": {},
+      "cache_syncs": true
+    },
+    "reward": {
+      "shape": "additive",
+      "extract_load_weight": 0.3,
+      "heldout_samples": 2,
+      "heldout_sample_percent": 70.0,
+      "turn_cost": 0.0,
+      "grading_threads": 8
+    },
+    "episode": {
+      "max_turns": 30,
+      "max_tool_calls": 60,
+      "max_trajectory_tokens": 60000,
+      "max_generation_tokens": 8192,
+      "rollout_timeout_seconds": 1800.0,
+      "parse_error_retries": 2,
+      "session_limits": {
+        "max_file_bytes": 32000,
+        "max_read_lines": 200,
+        "max_read_chars": 12000,
+        "max_query_rows": 50,
+        "max_cell_chars": 200,
+        "statement_timeout_seconds": 60.0,
+        "max_syncs_per_source_table": 4
+      }
+    }
+  },
+  "model_name": "Qwen/Qwen3.6-35B-A3B",
+  "recipe_name": "elt_bench_rlvr",
+  "max_tokens": 8192,
+  "log_path": "runs/acceptance/train",
+  "eval_every": 0,
+  "save_every": 0,
+  "evaluator_builders": [],
+  "load_checkpoint_path": null,
+  "renderer_name": "qwen3_5",
+  "wandb_project": null,
+  "wandb_name": "elt-Qwen-Qwen3.6-35B-A3B-4group-2batch-2026-11-10-17-54",
+  "session_name": null,
+  "kl_penalty_coef": 0.0,
+  "kl_discount_factor": 0.0,
+  "kl_reference_config": null,
+  "loss_fn": "importance_sampling",
+  "loss_fn_config": null,
+  "num_substeps": 1,
+  "lora_rank": 32,
+  "temperature": 1.0,
+  "compute_post_kl": false,
+  "remove_constant_reward_groups": true,
+  "rollout_error_tolerance": null,
+  "termination": null,
+  "enable_trace": false,
+  "span_chart_every": 0,
+  "async_config": null,
+  "stream_minibatch_config": null,
+  "base_url": null,
+  "ttl_seconds": 604800,
+  "rolling_save_every": 0,
+  "rolling_ttl_seconds": 7200,
+  "num_groups_to_log": 4,
+  "rollout_json_export": true,
+  "num_epochs": 1,
+  "max_steps": 1
+}
