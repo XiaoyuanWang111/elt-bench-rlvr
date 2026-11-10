@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --extra dev --python 3.12
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run black --check .
+      - name: Credential-free tests
+        run: uv run pytest -v
