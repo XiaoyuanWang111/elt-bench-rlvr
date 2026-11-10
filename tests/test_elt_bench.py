@@ -313,3 +313,26 @@ def test_sync_job_that_succeeds_is_not_cancelled(engine):
 
     assert engine._run_sync_job("connection-id") is None
     assert ("DELETE", "/jobs/7") not in calls
+
+
+def test_definition_named_by_the_deployment_replaces_the_shipped_connector(elt_bench_root, monkeypatch):
+    monkeypatch.setenv(
+        "ELT_RLVR_AIRBYTE_DEFINITION_IDS", json.dumps({"postgres": "11111111-2222-3333-4444-555555555555"})
+    )
+    engine = AirbyteEngine(settings=load_elt_bench_settings(elt_bench_root, "human_resources"))
+
+    rendered = engine.render_resources(_connection("postgres", POSTGRES_CONFIGURATION), "rollout_a")
+
+    source = rendered.resources["resource"]["airbyte_source_postgres"]["source"]
+    assert source["definition_id"] == "11111111-2222-3333-4444-555555555555"
+
+
+def test_source_without_a_named_definition_leaves_the_choice_to_airbyte(engine):
+    rendered = engine.render_resources(_connection("postgres", POSTGRES_CONFIGURATION), "rollout_a")
+
+    assert "definition_id" not in rendered.resources["resource"]["airbyte_source_postgres"]["source"]
+
+
+def test_api_source_without_a_registered_connector_is_rejected(engine):
+    with pytest.raises(ConnectionRejectedError, match="no REST API connector registered"):
+        engine.render_resources(_connection("custom_api", {}, stream="cars"), "rollout_a")

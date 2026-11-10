@@ -139,7 +139,8 @@ class AirbyteSettings:
     password: str | None = field(default=None, repr=False)
     client_id: str | None = field(default=None, repr=False)
     client_secret: str | None = field(default=None, repr=False)
-    custom_definition_id: str | None = None
+    definition_ids: Mapping[str, str] = field(default_factory=dict)
+    """Connector definition per source type. A type without an entry uses the definition Airbyte ships for it."""
     destination_resource: str = "airbyte_destination_snowflake"
     destination_configuration: Mapping[str, Any] = field(default_factory=dict, repr=False)
     uppercase_namespace: bool = True
@@ -182,6 +183,10 @@ def load_elt_bench_settings(elt_bench_root: Path, task_id: str, destination: str
                 }
             },
         )
+    definition_ids = {}
+    if airbyte.get("custom_api_definition_id"):
+        definition_ids["custom_api"] = airbyte["custom_api_definition_id"]
+    definition_ids.update(json.loads(os.environ.get("ELT_RLVR_AIRBYTE_DEFINITION_IDS", "{}")))
     return AirbyteSettings(
         api_url=os.environ.get("ELT_RLVR_AIRBYTE_API_URL", "http://localhost:8000/api/public/v1"),
         provider_server_url=os.environ.get("ELT_RLVR_AIRBYTE_PROVIDER_URL", airbyte["server_url"]),
@@ -190,7 +195,7 @@ def load_elt_bench_settings(elt_bench_root: Path, task_id: str, destination: str
         password=airbyte.get("password"),
         client_id=os.environ.get("ELT_RLVR_AIRBYTE_CLIENT_ID"),
         client_secret=os.environ.get("ELT_RLVR_AIRBYTE_CLIENT_SECRET"),
-        custom_definition_id=airbyte.get("custom_api_definition_id"),
+        definition_ids=definition_ids,
         destination_resource=DESTINATION_RESOURCES[destination],
         destination_configuration=destination_configuration,
         secrets=collect_secrets(sources),
@@ -356,8 +361,11 @@ class AirbyteEngine(ExtractLoadEngine):
             "configuration": configuration,
         }
         if connection.source_type == "custom_api":
+            if "custom_api" not in settings.definition_ids:
+                raise ConnectionRejectedError("this Airbyte deployment has no REST API connector registered")
             source["configuration"] = json.dumps(configuration)
-            source["definition_id"] = settings.custom_definition_id
+        if connection.source_type in settings.definition_ids:
+            source["definition_id"] = settings.definition_ids[connection.source_type]
         destination = self._externalize_secrets(settings.destination_configuration, rendered)
         destination["schema"] = namespace.upper() if settings.uppercase_namespace else namespace.lower()
         provider = self._provider(rendered)
