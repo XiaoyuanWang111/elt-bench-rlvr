@@ -1,0 +1,7 @@
+foreign_keys:
+  - table: employee
+    column: positionid
+    references: position.positionid
+  - table: employee
+    column: locationid
+    references: location.locationid

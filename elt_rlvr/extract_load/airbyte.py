@@ -158,6 +158,21 @@ def load_elt_bench_settings(elt_bench_root: Path, task_id: str, destination: str
         "username": warehouse["username"],
         "credentials": {"username_and_password": {"password": warehouse["password"]}},
     }
+    credential_file = elt_bench_root / "setup" / "destination" / f"{destination}_credential.json"
+    credential = json.loads(credential_file.read_text(encoding="utf-8")) if credential_file.is_file() else {}
+    if credential.get("private_key_file"):
+        # A key-pair credential replaces the benchmark's password user: Airbyte signs in as the same user as the
+        # environment, so a deployment needs no password at all.
+        destination_configuration.update(
+            role=credential.get("role") or warehouse["role"],
+            warehouse=credential.get("warehouse") or warehouse["warehouse"],
+            username=credential["user"],
+            credentials={
+                "key_pair_authentication": {
+                    "private_key": Path(credential["private_key_file"]).read_text(encoding="utf-8")
+                }
+            },
+        )
     return AirbyteSettings(
         api_url=os.environ.get("ELT_RLVR_AIRBYTE_API_URL", "http://localhost:8000/api/public/v1"),
         provider_server_url=os.environ.get("ELT_RLVR_AIRBYTE_PROVIDER_URL", airbyte["server_url"]),

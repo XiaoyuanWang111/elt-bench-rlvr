@@ -183,6 +183,32 @@ def test_rendered_file_names_secrets_only_as_sensitive_variables(engine):
     assert connection["configurations"]["streams"] == [{"name": "employee", "sync_mode": "full_refresh_append"}]
 
 
+def test_key_pair_credential_replaces_the_password_user_of_the_destination(elt_bench_root, tmp_path):
+    private_key = "-----BEGIN PRIVATE KEY-----\nexample-key-material\n-----END PRIVATE KEY-----\n"
+    key_file = tmp_path / "key.p8"
+    key_file.write_text(private_key, encoding="utf-8")
+    credential = {
+        "account": "example-account",
+        "user": "SERVICE_USER",
+        "role": "SYSADMIN",
+        "private_key_file": str(key_file),
+    }
+    (elt_bench_root / "setup" / "destination" / "snowflake_credential.json").write_text(
+        json.dumps(credential), encoding="utf-8"
+    )
+    engine = AirbyteEngine(settings=load_elt_bench_settings(elt_bench_root, "human_resources"))
+
+    rendered = engine.render_resources(_connection("postgres", POSTGRES_CONFIGURATION), "rollout_abc")
+
+    destination = rendered.resources["resource"]["airbyte_destination_snowflake"]["destination"]["configuration"]
+    assert destination["username"] == "SERVICE_USER"
+    assert destination["role"] == "SYSADMIN"
+    assert set(destination["credentials"]) == {"key_pair_authentication"}
+    assert private_key in rendered.variables.values()
+    assert WAREHOUSE_PASSWORD not in rendered.variables.values()
+    assert "example-key-material" not in json.dumps(rendered.resources)
+
+
 def test_unknown_secret_placeholder_is_rejected(engine):
     configuration = {**POSTGRES_CONFIGURATION, "password": "<secret:snowflake.config.password>"}
 

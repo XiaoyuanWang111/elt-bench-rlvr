@@ -1,0 +1,52 @@
+connections:
+  - name: employee_database
+    source:
+      type: postgres
+      configuration:
+        host: elt-postgres
+        port: 5432
+        database: human_resources
+        username: postgres
+        password: <secret:postgres.config.password>
+        schemas:
+          - public
+        replication_method:
+          scan_changes_with_user_defined_cursor: {}
+        ssl_mode:
+          disable: {}
+        tunnel_method:
+          no_tunnel: {}
+    streams:
+      - name: employee
+        sync_mode: full_refresh_append
+  - name: location_file
+    source:
+      type: file
+      configuration:
+        dataset_name: location
+        format: csv
+        url: https://drive.google.com/uc?export=download&id=17wON2HjWGNaHvh9zw3edOHOAoqgvyq40
+        provider:
+          https_public_web:
+            user_agent: false
+    streams:
+      - name: location
+        sync_mode: full_refresh_append
+  - name: position_bucket
+    source:
+      type: s3
+      configuration:
+        bucket: human-resources-bucket
+        aws_access_key_id: test
+        aws_secret_access_key: <secret:aws_s3.AWS_SECRET_ACCESS_KEY>
+        endpoint: http://elt-localstack:4566
+        region_name: us-west-2
+        streams:
+          - name: position
+            globs:
+              - position.csv
+            format:
+              csv_format: {}
+    streams:
+      - name: position
+        sync_mode: full_refresh_append
