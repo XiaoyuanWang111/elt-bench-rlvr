@@ -23,6 +23,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Mapping
@@ -57,6 +58,9 @@ MIN_SCRUBBED_LENGTH = 6
 """Secrets shorter than this (ELT-Bench's ``test`` keys) are not searched for in messages: removing every
 occurrence of such a string would garble the message without protecting anything."""
 MAX_ERROR_LINES = 30
+REQUIRED_PROVIDERS = {"required_providers": {"airbyte": {"source": "airbytehq/airbyte", "version": PROVIDER_VERSION}}}
+PROVIDER_DIRECTORY = Path.home() / ".cache" / "elt_rlvr" / "terraform" / PROVIDER_VERSION
+_provider_lock = threading.Lock()
 
 
 def secret_placeholder(path: str) -> str:
@@ -222,8 +226,29 @@ class AirbyteEngine(ExtractLoadEngine):
                 raise ValueError("AirbyteEngine needs either settings or an ELT-Bench root and task")
             settings = load_elt_bench_settings(Path(elt_bench_root), task_id, destination)
         self._settings = settings
-        self._plugin_cache = Path(tempfile.gettempdir()) / "elt_rlvr_terraform_plugins"
-        self._plugin_cache.mkdir(parents=True, exist_ok=True)
+
+    def _installed_provider(self) -> Path:
+        """A directory in which ``terraform init`` has installed the Airbyte provider.
+
+        Every sync links to it instead of running ``init`` itself: concurrent ``init`` runs that share a plugin
+        cache overwrite a provider binary that another run is executing.
+        """
+        with _provider_lock:
+            if not (PROVIDER_DIRECTORY / ".terraform.lock.hcl").is_file():
+                PROVIDER_DIRECTORY.mkdir(parents=True, exist_ok=True)
+                (PROVIDER_DIRECTORY / "main.tf.json").write_text(
+                    json.dumps({"terraform": REQUIRED_PROVIDERS}), encoding="utf-8"
+                )
+                result = subprocess.run(
+                    [*self._settings.terraform_command, "init", "-input=false", "-no-color"],
+                    cwd=PROVIDER_DIRECTORY,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"terraform init failed: {result.stderr[-1000:]}")
+        return PROVIDER_DIRECTORY
 
     def source_types(self) -> tuple[str, ...]:
         return tuple(SOURCE_RESOURCES)
@@ -333,9 +358,7 @@ class AirbyteEngine(ExtractLoadEngine):
         if settings.client_id:
             rendered.variables[TOKEN_VARIABLE] = ""
         rendered.resources = {
-            "terraform": {
-                "required_providers": {"airbyte": {"source": "airbytehq/airbyte", "version": PROVIDER_VERSION}}
-            },
+            "terraform": REQUIRED_PROVIDERS,
             "variable": {name: {"type": "string", "sensitive": True} for name in rendered.variables},
             "provider": {"airbyte": provider},
             "resource": {
@@ -369,7 +392,7 @@ class AirbyteEngine(ExtractLoadEngine):
     def _terraform(self, directory: Path, rendered: RenderedConnection, *arguments: str) -> subprocess.CompletedProcess:
         if TOKEN_VARIABLE in rendered.variables:
             rendered.variables[TOKEN_VARIABLE] = self._access_token() or ""
-        environment = {**os.environ, "TF_PLUGIN_CACHE_DIR": str(self._plugin_cache), "TF_IN_AUTOMATION": "1"}
+        environment = {**os.environ, "TF_IN_AUTOMATION": "1"}
         environment.update({f"TF_VAR_{name}": value for name, value in rendered.variables.items()})
         return subprocess.run(
             [*self._settings.terraform_command, *arguments],
@@ -419,13 +442,12 @@ class AirbyteEngine(ExtractLoadEngine):
         try:
             # One value per line, so that Terraform's error excerpt shows the offending field and nothing else.
             (directory / "main.tf.json").write_text(json.dumps(rendered.resources, indent=2), encoding="utf-8")
-            for arguments in (
-                ("init", "-input=false", "-no-color"),
-                ("apply", "-auto-approve", "-input=false", "-no-color"),
-            ):
-                result = self._terraform(directory, rendered, *arguments)
-                if result.returncode != 0:
-                    raise ConnectionRejectedError(self._terraform_error(result, rendered))
+            provider = self._installed_provider()
+            (directory / ".terraform").symlink_to(provider / ".terraform", target_is_directory=True)
+            shutil.copy(provider / ".terraform.lock.hcl", directory / ".terraform.lock.hcl")
+            result = self._terraform(directory, rendered, "apply", "-auto-approve", "-input=false", "-no-color")
+            if result.returncode != 0:
+                raise ConnectionRejectedError(self._terraform_error(result, rendered))
             output = self._terraform(directory, rendered, "output", "-json")
             connection_id = json.loads(output.stdout)["connection_id"]["value"]
             failure = self._run_sync_job(connection_id)
