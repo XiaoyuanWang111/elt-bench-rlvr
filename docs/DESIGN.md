@@ -21,9 +21,10 @@ latency come from, is gone.
 so it does not depend on which one ended the episode.
 
 **State.** Stateful: files, Airbyte objects and warehouse tables change, and a sync in append mode is not
-idempotent (a second run doubles the rows). Episodes are independent instead: each rollout has its own workspace
-and warehouse namespace, and sources are read-only. Rollouts of one task start from the same state and run in
-parallel, which GRPO-style groups need.
+idempotent (a second sync doubles the rows, so `run_extract_load` applies the file like `terraform apply` and
+leaves loaded streams alone). Episodes are still independent: each rollout has its own workspace and warehouse
+namespace, and sources are read-only. Rollouts of one task start from the same state and run in parallel, which
+GRPO-style groups need.
 
 ## 2. Reward
 
@@ -44,8 +45,8 @@ the data changes.
 `reward = 0.3 * EL + 0.7 * T`. `T` needs no gate on `EL`: columns are graded on the tables the pipeline itself
 loaded, so a wrong load already costs the columns that depend on it. The benchmark scores transformations only
 after loading succeeds. The shape that mirrors this, `EL * (0.3 + 0.7 * T)`, is one setting, and it discards
-signal: a sampled rollout that loaded every table twice and had a transform score of 0.25 gets 0.175 from the
-sum and 0 from the product.
+signal: a sampled rollout that loaded every table more than once and had a transform score of 0.25 gets 0.175
+from the sum and 0 from the product.
 
 **Outcome or process reward.** A graded outcome reward. tinker-cookbook centres the total reward within a group,
 so a group whose rollouts all score the same teaches nothing, and the graded reward separates rollouts that the
