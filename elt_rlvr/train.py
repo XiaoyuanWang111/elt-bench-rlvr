@@ -43,7 +43,7 @@ class CLIConfig:
     max_trajectory_tokens: int = 60_000
 
     # Reward
-    reward_shape: RewardShape = "multiplicative"
+    reward_shape: RewardShape = "additive"
     extract_load_weight: float = 0.3
     heldout_samples: int = 2
     turn_cost: float = 0.0

@@ -35,8 +35,9 @@ RewardShape = Literal["multiplicative", "additive", "binary"]
 class RewardConfig:
     """How scores combine into the reward."""
 
-    shape: RewardShape = "multiplicative"
-    """``multiplicative``: ``EL * (w + (1 - w) * T)``; ``additive``: ``w * EL + (1 - w) * T``;
+    shape: RewardShape = "additive"
+    """``additive``: ``w * EL + (1 - w) * T``; ``multiplicative``: ``EL * (w + (1 - w) * T)``, which pays for
+    transformations only in proportion to the loads that are right, as the benchmark's two stages do;
     ``binary``: 1 only when every table is right."""
     extract_load_weight: float = 0.3
     heldout_samples: int = 2

@@ -47,7 +47,7 @@ def test_load_without_models_earns_extract_load_weight(local_tasks, warehouse, w
     assert result.reward == pytest.approx(RewardConfig().extract_load_weight)
 
 
-def test_missing_source_table_scales_the_reward(local_tasks, warehouse, workspace):
+def test_missing_source_table_costs_its_share_and_the_model_that_needs_it(local_tasks, warehouse, workspace):
     task = local_tasks["storefront"]
     session = open_session(task, warehouse, workspace)
 
@@ -66,7 +66,7 @@ def test_missing_source_table_scales_the_reward(local_tasks, warehouse, workspac
     # customers_summary needs no reviews and is fully right; products_summary cannot be built.
     assert result.model_columns["customers_summary"] == dict.fromkeys(task.data_models[0].columns, True)
     assert result.transform_score == 0.5
-    assert result.reward == pytest.approx(0.75 * (0.3 + 0.7 * 0.5))
+    assert result.reward == pytest.approx(0.3 * 0.75 + 0.7 * 0.5)
 
 
 def test_wrong_column_loses_only_that_column(local_tasks, warehouse, workspace):
