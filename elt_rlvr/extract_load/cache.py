@@ -5,8 +5,10 @@ connection configuration as long as the sources do not change. ``CachingEngine``
 once, keeps the loaded tables in a snapshot namespace, and serves every later sync of the same configuration by
 copying the snapshot inside the warehouse. Invalid configurations are remembered too, with their error message.
 
-The rollout observes exactly what a real sync would produce: the same tables and row counts, duplicated rows when
-it appends twice, and the same error for a bad configuration.
+The rollout observes what a real sync would produce: the same tables, rows and row counts, duplicated rows when it
+appends twice, and the same error for a bad configuration. Only the loader's metadata columns differ: they are
+copied with the rows, so every copy carries the snapshot's ``_airbyte_raw_id`` and ``_airbyte_extracted_at``.
+Grading ignores those columns.
 """
 
 import hashlib

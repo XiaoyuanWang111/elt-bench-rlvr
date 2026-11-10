@@ -141,6 +141,9 @@ class LocalEngine(ExtractLoadEngine):
                 raise ConnectionRejectedError(f"file source: reader_options is not valid JSON: {error}") from error
         if not isinstance(reader_options, Mapping) or set(reader_options) - {"sep"}:
             raise ConnectionRejectedError("file source: reader_options supports only the key 'sep'")
+        separator = reader_options.get("sep", ",")
+        if not isinstance(separator, str) or not separator:
+            raise ConnectionRejectedError("file source: reader_options.sep must be a non-empty string")
         dataset_name = configuration["dataset_name"]
 
         def read(stream: str) -> pd.DataFrame:
@@ -148,7 +151,7 @@ class LocalEngine(ExtractLoadEngine):
                 raise StreamNotFoundError(f"available streams: {dataset_name}")
             if file_format == "jsonl":
                 return _read_json_lines(path)
-            return pd.read_csv(path, sep=reader_options.get("sep", ",")).convert_dtypes()
+            return pd.read_csv(path, sep=separator).convert_dtypes()
 
         return read
 
@@ -204,6 +207,15 @@ class LocalEngine(ExtractLoadEngine):
             except StreamNotFoundError as error:
                 results.append(failed(f"stream {stream.name!r} not found in the source; {error}"))
                 continue
+            except ConnectionRejectedError:
+                raise
+            except (ValueError, TypeError, OSError, sqlite3.Error) as error:
+                # The source exists but is not what the configuration says: a CSV file read as JSON Lines, a text
+                # file opened as a database. The policy wrote that configuration, so it gets the error back.
+                detail = f"{type(error).__name__}: {error}"[:300]
+                raise ConnectionRejectedError(
+                    f"{connection.source_type} source: cannot read stream {stream.name!r}: {detail}"
+                ) from error
             frame[f"{METADATA_COLUMN_PREFIX}raw_id"] = [f"{sync_id}-{index}" for index in range(len(frame))]
             frame[f"{METADATA_COLUMN_PREFIX}extracted_at"] = extracted_at
             try:
