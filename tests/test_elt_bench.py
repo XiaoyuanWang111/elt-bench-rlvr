@@ -167,15 +167,18 @@ def test_logged_configuration_of_an_official_task_holds_no_secret(elt_bench_root
     assert all(secret not in logged for secret in SECRETS)
 
 
-def test_secret_placeholder_is_resolved_only_inside_the_rendered_resources(engine):
-    resources = engine.render_resources(_connection("postgres", POSTGRES_CONFIGURATION), "rollout_abc")
+def test_rendered_file_names_secrets_only_as_sensitive_variables(engine):
+    rendered = engine.render_resources(_connection("postgres", POSTGRES_CONFIGURATION), "rollout_abc")
 
+    resources = rendered.resources
     source = resources["resource"]["airbyte_source_postgres"]["source"]
     destination = resources["resource"]["airbyte_destination_snowflake"]["destination"]["configuration"]
     connection = resources["resource"]["airbyte_connection"]["connection"]
-    assert source["configuration"]["password"] == POSTGRES_PASSWORD
+    assert all(secret not in json.dumps(resources) for secret in SECRETS)
+    assert sorted(rendered.variables.values()) == sorted([POSTGRES_PASSWORD, WAREHOUSE_PASSWORD, AIRBYTE_PASSWORD])
+    assert source["configuration"]["password"] in {f"${{var.{name}}}" for name in rendered.variables}
+    assert all(resources["variable"][name] == {"type": "string", "sensitive": True} for name in rendered.variables)
     assert destination["schema"] == "ROLLOUT_ABC"
-    assert destination["credentials"]["username_and_password"]["password"] == WAREHOUSE_PASSWORD
     assert connection["source_id"] == "${airbyte_source_postgres.source.source_id}"
     assert connection["configurations"]["streams"] == [{"name": "employee", "sync_mode": "full_refresh_append"}]
 
@@ -225,28 +228,28 @@ def test_sources_named_in_the_task_config_are_accepted(engine):
     }
 
     engine.render_resources(_connection("file", file_configuration, "location"), "rollout_abc")
-    resources = engine.render_resources(_connection("s3", s3_configuration, "position"), "rollout_abc")
+    rendered = engine.render_resources(_connection("s3", s3_configuration, "position"), "rollout_abc")
 
-    assert resources["resource"]["airbyte_source_s3"]["source"]["configuration"]["aws_secret_access_key"] == S3_SECRET
+    assert S3_SECRET in rendered.variables.values()
 
 
 def test_terraform_template_in_a_configuration_string_is_rendered_literally(engine):
     configuration = {**POSTGRES_CONFIGURATION, "jdbc_url_params": '${file("/etc/passwd")}%{if true}x%{endif}'}
 
-    resources = engine.render_resources(_connection("postgres", configuration), "rollout_abc")
+    rendered = engine.render_resources(_connection("postgres", configuration), "rollout_abc")
 
-    rendered = resources["resource"]["airbyte_source_postgres"]["source"]["configuration"]["jdbc_url_params"]
-    assert rendered == '$${file("/etc/passwd")}%%{if true}x%%{endif}'
+    source = rendered.resources["resource"]["airbyte_source_postgres"]["source"]
+    assert source["configuration"]["jdbc_url_params"] == '$${file("/etc/passwd")}%%{if true}x%%{endif}'
 
 
 def test_error_text_returned_to_the_policy_has_secrets_removed(engine):
     stderr = f"Error: authentication failed for postgres with password {POSTGRES_PASSWORD} and {WAREHOUSE_PASSWORD}\n"
     result = subprocess.CompletedProcess(args=["terraform"], returncode=1, stdout="", stderr=stderr)
+    rendered = engine.render_resources(_connection("postgres", POSTGRES_CONFIGURATION), "rollout_abc")
 
-    message = engine._terraform_error(result)
+    message = engine._terraform_error(result, rendered)
 
-    assert "authentication failed" in message
-    assert all(secret not in message for secret in SECRETS)
+    assert message == "Error: authentication failed for postgres with password <secret> and <secret>"
 
 
 def test_unknown_source_type_is_rejected(engine):
