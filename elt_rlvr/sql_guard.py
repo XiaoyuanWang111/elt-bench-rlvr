@@ -99,6 +99,53 @@ def _check_function(function: exp.Func) -> None:
         raise SqlRejectedError(f"function {name}() is not available")
 
 
+def _identifier_key(identifier: exp.Identifier, dialect: str) -> str:
+    """The name as the warehouse resolves it: Snowflake keeps the case of a quoted name and upper-cases the rest."""
+    if dialect == "snowflake":
+        return identifier.name if identifier.quoted else identifier.name.upper()
+    return identifier.name.lower()
+
+
+def _cte_key(cte: exp.CTE, dialect: str) -> str | None:
+    alias = cte.args.get("alias")
+    identifier = alias.this if alias is not None else None
+    return _identifier_key(identifier, dialect) if isinstance(identifier, exp.Identifier) else None
+
+
+def _with_clause(node: exp.Expression) -> exp.With | None:
+    # sqlglot 28 renamed the argument from "with" to "with_".
+    clause = node.args.get("with_") or node.args.get("with")
+    return clause if isinstance(clause, exp.With) else None
+
+
+def _names_cte_in_scope(table: exp.Table, dialect: str) -> bool:
+    """Whether the bare name at ``table`` refers to a common table expression that is in scope there.
+
+    A CTE is in scope in the body of the query that declares it, in the CTEs declared after it in the same WITH
+    clause, and inside itself only when the clause is recursive. Anywhere else the same name is a stored table,
+    which must pass the namespace check like any other.
+    """
+    key = _identifier_key(table.this, dialect)
+    child: exp.Expression = table
+    while child.parent is not None:
+        parent = child.parent
+        if isinstance(parent, exp.With):
+            for cte in parent.expressions:
+                if cte is child:
+                    if parent.args.get("recursive") and _cte_key(cte, dialect) == key:
+                        return True
+                    break
+                if _cte_key(cte, dialect) == key:
+                    return True
+        else:
+            clause = _with_clause(parent)
+            if clause is not None and clause is not child:
+                if any(_cte_key(cte, dialect) == key for cte in clause.expressions):
+                    return True
+        child = parent
+    return False
+
+
 def _parse_single_query(sql: str, dialect: str) -> exp.Query:
     if len(sql) > MAX_SQL_CHARS:
         raise SqlRejectedError(f"statement is longer than {MAX_SQL_CHARS} characters")
@@ -141,7 +188,6 @@ def vet_query(sql: str, *, dialect: str, table_namespaces: Mapping[str, str]) ->
         if isinstance(node, exp.Func):
             _check_function(node)
 
-    cte_names = {cte.alias_or_name.lower() for cte in root.find_all(exp.CTE)}
     canonical_names = {name.lower(): name for name in table_namespaces}
     referenced: list[str] = []
 
@@ -158,7 +204,7 @@ def vet_query(sql: str, *, dialect: str, table_namespaces: Mapping[str, str]) ->
                 f"qualified table name {table.sql(dialect=dialect)!r} is not allowed; use the bare table name"
             )
         name = relation.name
-        if name.lower() in cte_names:
+        if _names_cte_in_scope(table, dialect):
             continue
         if name.lower() not in canonical_names:
             available = ", ".join(sorted(canonical_names.values())) or "(none)"
