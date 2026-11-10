@@ -40,7 +40,7 @@ class _Outcome:
 
     @property
     def complete(self) -> bool:
-        return self.results is not None and all(result.succeeded for result in self.results)
+        return bool(self.results) and all(result.succeeded for result in self.results)
 
 
 class CachingEngine(ExtractLoadEngine):
@@ -112,7 +112,7 @@ class CachingEngine(ExtractLoadEngine):
             if warehouse.row_count(outcome.namespace, result.table) != result.rows_loaded:
                 return False
         outcome.results = results
-        return True
+        return outcome.complete
 
     def _serve(
         self, outcome: _Outcome, connection: ConnectionConfig, warehouse: Warehouse, namespace: str
