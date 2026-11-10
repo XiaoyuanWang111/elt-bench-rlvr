@@ -433,13 +433,14 @@ def test_query_returns_a_bounded_number_of_rows(local_tasks, warehouse, workspac
     assert result["truncated"]
 
 
-def test_extract_load_runs_are_capped(local_tasks, warehouse, workspace):
+def test_connection_syncs_are_capped(local_tasks, warehouse, workspace):
     session = open_session(local_tasks["library"], warehouse, workspace)
     write_pipeline(session, reference_extract_load(session.task), {})
-    for _ in range(session.limits.max_extract_load_runs):
+    # Two source tables give eight syncs; the file has two connections.
+    for _ in range(session.limits.max_syncs_per_source_table):
         assert "error" not in session.run_extract_load()
 
-    assert "at most" in session.run_extract_load()["error"]
+    assert "at most 8 connection syncs; 8 are used" in session.run_extract_load()["error"]
 
 
 def test_oversized_file_is_refused(local_tasks, warehouse, workspace):

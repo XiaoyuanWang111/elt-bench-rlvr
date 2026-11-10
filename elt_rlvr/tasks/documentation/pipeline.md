@@ -25,7 +25,8 @@ for streams and sync modes.
 
 `run_extract_load` runs every connection once and reports, per stream, the rows loaded or the error. Pass
 `connections` to run only the named ones, for example to retry one that failed: running a connection again in an
-append mode loads its rows again.
+append mode loads its rows again. An episode can run four connection syncs per source table of the task;
+`source_tables` in the result is the number of rows each loaded table holds now.
 
 ## pipeline/models/<model>.sql
 

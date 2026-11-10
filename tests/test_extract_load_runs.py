@@ -32,6 +32,21 @@ def test_unknown_connection_name_is_reported_with_the_names_in_the_file(local_ta
     assert session.raw_tables == set()
 
 
+def test_sync_budget_counts_connections_not_calls(local_tasks, warehouse, workspace):
+    task = local_tasks["library"]
+    session = open_session(task, warehouse, workspace)
+    write_pipeline(session, edit_extract_load(task, lambda document: None), {})
+    for _ in range(7):
+        assert "error" not in session.run_extract_load(["loans_file"])
+
+    refused = session.run_extract_load()
+    last = session.run_extract_load(["members_file"])
+
+    assert "7 are used and this call would run 2" in refused["error"]
+    assert last["connections"][0]["status"] == "succeeded"
+    assert session.connection_syncs == 8
+
+
 def test_retrying_only_the_failed_connection_keeps_append_loads_single(local_tasks, warehouse, workspace):
     task = local_tasks["library"]
     session = open_session(task, warehouse, workspace)

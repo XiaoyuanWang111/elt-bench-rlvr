@@ -40,7 +40,8 @@ class SessionLimits:
     max_query_rows: int = 50
     max_cell_chars: int = 200
     statement_timeout_seconds: float = 60.0
-    max_extract_load_runs: int = 6
+    max_syncs_per_source_table: int = 4
+    """An episode may sync this many connections for every source table of its task."""
 
 
 @dataclass
@@ -65,6 +66,7 @@ class RolloutSession:
     model_tables: set[str] = field(default_factory=set)
     timings: list[ToolTiming] = field(default_factory=list)
     extract_load_runs: int = 0
+    connection_syncs: int = 0
     tool_errors: int = 0
     submitted: bool = False
 
@@ -154,8 +156,6 @@ class RolloutSession:
         selected = connections
 
         def action() -> dict[str, Any]:
-            if self.extract_load_runs >= self.limits.max_extract_load_runs:
-                raise ToolError(f"extract-load can run at most {self.limits.max_extract_load_runs} times per episode")
             config_file = self.workspace / EXTRACT_LOAD_PATH
             if not config_file.is_file():
                 raise ToolError(f"{EXTRACT_LOAD_PATH} does not exist")
@@ -166,9 +166,16 @@ class RolloutSession:
                     names = ", ".join(connection.name for connection in connections)
                     raise ToolError(f"no connection named: {', '.join(unknown)}; connections in the file: {names}")
                 connections = [connection for connection in connections if connection.name in selected]
+            budget = self.limits.max_syncs_per_source_table * len(self.task.source_tables)
+            if self.connection_syncs + len(connections) > budget:
+                raise ToolError(
+                    f"an episode can run at most {budget} connection syncs; {self.connection_syncs} are used "
+                    f"and this call would run {len(connections)}"
+                )
             self.extract_load_runs += 1
             report = []
             for connection in connections:
+                self.connection_syncs += 1
                 try:
                     results = self.engine.sync(connection, warehouse=self.warehouse, namespace=self.namespace)
                 except ConnectionRejectedError as error:
