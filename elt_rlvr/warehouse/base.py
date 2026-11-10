@@ -56,6 +56,8 @@ class Warehouse(ABC):
 
     dialect: str
     """sqlglot dialect name used to parse and print SQL for this destination."""
+    persistent: bool = False
+    """Whether namespaces outlive this connection. A later process may then reuse what an earlier one loaded."""
 
     @abstractmethod
     def create_namespace(self, namespace: str) -> None:

@@ -4,6 +4,7 @@ The reference state is built by running the task's reference pipeline through th
 the rollouts. It lives in namespaces that no tool can name, and it is built once per task and reused.
 """
 
+import hashlib
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +17,7 @@ from elt_rlvr.pipeline import parse_extract_load, read_models
 from elt_rlvr.task import TaskSpec
 from elt_rlvr.transform import run_models
 from elt_rlvr.warehouse.base import Column, TableFingerprint, Warehouse
+from elt_rlvr.warehouse.state import read_state, write_state
 
 REFERENCE_TIMEOUT_SECONDS = 600.0
 MAX_HELDOUT_DRAWS = 5
@@ -95,16 +97,33 @@ class TaskReference:
             for model in self.task.data_models
         }
 
+    def _stored_source_tables(self) -> dict[str, str]:
+        """Stored names of the source tables present in the reference namespace, keyed by lower-cased name."""
+        stored = {name.lower(): name for name in self.warehouse.list_tables(self.namespace)}
+        return {table.lower(): stored[table.lower()] for table in self.task.source_tables if table.lower() in stored}
+
     def _load_reference_tables(self) -> None:
         assert self.task.reference_dir is not None
-        self.warehouse.create_namespace(self.namespace)
         config = (self.task.reference_dir / "extract_load.yaml").read_text(encoding="utf-8")
-        for connection in parse_extract_load(config):
-            results = self.engine.sync(connection, warehouse=self.warehouse, namespace=self.namespace)
-            failed = [f"{result.stream}: {result.error}" for result in results if not result.succeeded]
-            if failed:
-                raise ReferencePipelineError(f"reference load of {self.task.task_id} failed: {'; '.join(failed)}")
-        stored_names = {name.lower(): name for name in self.warehouse.list_tables(self.namespace)}
+        digest = hashlib.sha256(config.encode()).hexdigest()
+        # A persistent warehouse may still hold the load of an earlier process. It is reused when it was made
+        # from the same extract-load file and every source table is still there.
+        state = read_state(self.warehouse, self.namespace) if self.warehouse.persistent else None
+        reusable = (
+            state is not None
+            and state.get("extract_load") == digest
+            and len(self._stored_source_tables()) == len(self.task.source_tables)
+        )
+        if not reusable:
+            self.warehouse.create_namespace(self.namespace)
+            for connection in parse_extract_load(config):
+                results = self.engine.sync(connection, warehouse=self.warehouse, namespace=self.namespace)
+                failed = [f"{result.stream}: {result.error}" for result in results if not result.succeeded]
+                if failed:
+                    raise ReferencePipelineError(f"reference load of {self.task.task_id} failed: {'; '.join(failed)}")
+            if self.warehouse.persistent:
+                write_state(self.warehouse, self.namespace, {"extract_load": digest})
+        stored_names = self._stored_source_tables()
         missing = [table for table in self.task.source_tables if table.lower() not in stored_names]
         if missing:
             raise ReferencePipelineError(f"reference load of {self.task.task_id} did not create: {', '.join(missing)}")

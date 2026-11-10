@@ -32,6 +32,7 @@ class SnowflakeWarehouse(Warehouse):
     """A Snowflake database whose schemas are the namespaces."""
 
     dialect = "snowflake"
+    persistent = True
 
     def __init__(
         self,

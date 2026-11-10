@@ -12,11 +12,12 @@ it appends twice, and the same error for a bad configuration.
 import hashlib
 import json
 import threading
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 
 from elt_rlvr.extract_load.base import ConnectionRejectedError, ExtractLoadEngine, StreamResult
 from elt_rlvr.pipeline import ConnectionConfig, StreamConfig
 from elt_rlvr.warehouse.base import Warehouse
+from elt_rlvr.warehouse.state import read_state, write_state
 
 SNAPSHOT_SYNC_MODES = ("full_refresh_overwrite", "full_refresh_append")
 
@@ -61,8 +62,12 @@ class CachingEngine(ExtractLoadEngine):
             if snapshot is not None:
                 self.hits += 1
                 return snapshot
-            self.misses += 1
             snapshot = _Snapshot(namespace=f"sync_cache_{key}")
+            if warehouse.persistent and self._restore(snapshot, warehouse):
+                self.hits += 1
+                self._snapshots[key] = snapshot
+                return snapshot
+            self.misses += 1
             warehouse.create_namespace(snapshot.namespace)
             overwrite = replace(
                 connection,
@@ -72,8 +77,28 @@ class CachingEngine(ExtractLoadEngine):
                 snapshot.results = self._inner.sync(overwrite, warehouse=warehouse, namespace=snapshot.namespace)
             except ConnectionRejectedError as error:
                 snapshot.rejection = str(error)
+            if warehouse.persistent:
+                results = [asdict(result) for result in snapshot.results or []]
+                write_state(warehouse, snapshot.namespace, {"results": results, "rejection": snapshot.rejection})
             self._snapshots[key] = snapshot
             return snapshot
+
+    def _restore(self, snapshot: _Snapshot, warehouse: Warehouse) -> bool:
+        """Fill ``snapshot`` from what an earlier process left in the warehouse. False if nothing usable is there."""
+        state = read_state(warehouse, snapshot.namespace)
+        if state is None:
+            return False
+        results = [StreamResult(**result) for result in state["results"]]
+        stored = {name.lower() for name in warehouse.list_tables(snapshot.namespace)}
+        for result in results:
+            if not result.succeeded:
+                continue
+            if result.table.lower() not in stored:
+                return False
+            if warehouse.row_count(snapshot.namespace, result.table) != result.rows_loaded:
+                return False
+        snapshot.results, snapshot.rejection = results, state["rejection"]
+        return True
 
     def sync(self, connection: ConnectionConfig, *, warehouse: Warehouse, namespace: str) -> list[StreamResult]:
         if any(stream.sync_mode not in SNAPSHOT_SYNC_MODES for stream in connection.streams):
