@@ -23,10 +23,11 @@ Take the real values from `config.yaml`. Its key names are not always the connec
 `documentation/source_<type>.md` files list the fields each source type accepts. See `documentation/connection.md`
 for streams and sync modes.
 
-`run_extract_load` runs every connection once and reports, per stream, the rows loaded or the error. Pass
-`connections` to run only the named ones, for example to retry one that failed: running a connection again in an
-append mode loads its rows again. An episode can run four connection syncs per source table of the task;
-`source_tables` in the result is the number of rows each loaded table holds now.
+`run_extract_load` applies the file and reports, per stream, the rows loaded or the error. A stream that has
+already loaded from its connection with the same source configuration and sync mode is left alone, so after
+fixing one connection you can call it again. Pass `connections` to sync the named connections again in full; in
+an append mode that loads their rows a second time. An episode can run four connection syncs per source table of
+the task; `source_tables` in the result is the number of rows each loaded table holds now.
 
 ## pipeline/models/<model>.sql
 

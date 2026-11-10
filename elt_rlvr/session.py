@@ -5,22 +5,26 @@ call. The policy supplies only the arguments. Each method returns a JSON-seriali
 failure as ``{"error": ...}`` so that the policy can read it and try again.
 """
 
+import json
+import logging
 import math
 import shutil
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from elt_rlvr.extract_load.base import ConnectionRejectedError, ExtractLoadEngine
+from elt_rlvr.extract_load.base import ConnectionRejectedError, ExtractLoadEngine, table_name_for_stream
 from elt_rlvr.pipeline import (
     EXTRACT_LOAD_PATH,
     MODELS_DIRECTORY,
+    ConnectionConfig,
     PipelineError,
+    StreamConfig,
     parse_extract_load,
     read_models,
 )
@@ -28,6 +32,10 @@ from elt_rlvr.sql_guard import SqlRejectedError, vet_query
 from elt_rlvr.task import TaskSpec
 from elt_rlvr.transform import run_models
 from elt_rlvr.warehouse.base import IDENTIFIER_PATTERN, Warehouse, WarehouseError
+
+logger = logging.getLogger(__name__)
+
+UNCHANGED_NOTE = "already loaded with this configuration; name the connection in `connections` to load it again"
 
 
 @dataclass(frozen=True)
@@ -68,6 +76,9 @@ class RolloutSession:
     extract_load_runs: int = 0
     connection_syncs: int = 0
     tool_errors: int = 0
+    environment_errors: int = 0
+    """Connections that failed because of the environment (Airbyte, the network), not the configuration."""
+    loaded_streams: set[tuple[str, str, str, str]] = field(default_factory=set)
     submitted: bool = False
 
     def __post_init__(self) -> None:
@@ -151,8 +162,60 @@ class RolloutSession:
 
         return self._call("write_file", action)
 
+    @staticmethod
+    def _stream_key(connection: ConnectionConfig, stream: StreamConfig) -> tuple[str, str, str, str]:
+        source = json.dumps([connection.source_type, connection.configuration], sort_keys=True, default=str)
+        return (connection.name, source, stream.name, stream.sync_mode)
+
+    def _sync(self, connection: ConnectionConfig, pending: ConnectionConfig) -> dict[str, Any]:
+        """Sync the streams of ``pending`` and describe every stream of ``connection`` for the policy."""
+        self.connection_syncs += 1
+        try:
+            results = self.engine.sync(pending, warehouse=self.warehouse, namespace=self.namespace)
+        except ConnectionRejectedError as error:
+            return {"connection": connection.name, "status": "failed", "error": str(error)}
+        except Exception as error:
+            # A fault of the environment. The call goes on, so that the policy still learns what the other
+            # connections of this call loaded.
+            logger.exception("syncing connection %s of %s failed", connection.name, self.namespace)
+            self.environment_errors += 1
+            detail = f"{type(error).__name__}: {error}"[:300]
+            return {
+                "connection": connection.name,
+                "status": "failed",
+                "error": f"the environment could not run this connection ({detail})",
+            }
+        entries: dict[str, dict[str, Any]] = {}
+        streams = {stream.name: stream for stream in pending.streams}
+        for result in results:
+            if result.succeeded:
+                self.raw_tables.add(result.table)
+                self.model_tables.discard(result.table)
+                self.loaded_streams.add(self._stream_key(connection, streams[result.stream]))
+            entry = {"stream": result.stream, "table": result.table, "rows_loaded": result.rows_loaded}
+            entry["status"] = "succeeded" if result.succeeded else "failed"
+            if result.error:
+                entry["error"] = result.error
+            entries[result.stream] = entry
+        for stream in connection.streams:
+            if stream.name not in streams:
+                entries[stream.name] = {
+                    "stream": stream.name,
+                    "table": table_name_for_stream(stream.name),
+                    "status": "unchanged",
+                }
+        status = "succeeded" if all(result.succeeded for result in results) else "failed"
+        ordered = [entries[stream.name] for stream in connection.streams if stream.name in entries]
+        return {"connection": connection.name, "status": status, "streams": ordered}
+
     def run_extract_load(self, connections: list[str] | None = None) -> dict[str, Any]:
-        """Sync the connections of the extract-load file, or only the named ones."""
+        """Apply the extract-load file.
+
+        Without names, a stream that has already loaded from its connection with the current source configuration
+        and sync mode is left alone, the way ``terraform apply`` leaves an unchanged resource alone. A retry after
+        one connection failed therefore does not append the others a second time. Naming a connection syncs all of
+        its streams again.
+        """
         selected = connections
 
         def action() -> dict[str, Any]:
@@ -166,33 +229,30 @@ class RolloutSession:
                     names = ", ".join(connection.name for connection in connections)
                     raise ToolError(f"no connection named: {', '.join(unknown)}; connections in the file: {names}")
                 connections = [connection for connection in connections if connection.name in selected]
+            plan: list[tuple[ConnectionConfig, ConnectionConfig | None]] = []
+            for connection in connections:
+                streams = tuple(
+                    stream
+                    for stream in connection.streams
+                    if selected or self._stream_key(connection, stream) not in self.loaded_streams
+                )
+                plan.append((connection, replace(connection, streams=streams) if streams else None))
+            syncs = sum(pending is not None for _, pending in plan)
             budget = self.limits.max_syncs_per_source_table * len(self.task.source_tables)
-            if self.connection_syncs + len(connections) > budget:
+            if self.connection_syncs + syncs > budget:
                 raise ToolError(
                     f"an episode can run at most {budget} connection syncs; {self.connection_syncs} are used "
-                    f"and this call would run {len(connections)}"
+                    f"and this call would run {syncs}"
                 )
             self.extract_load_runs += 1
-            report = []
-            for connection in connections:
-                self.connection_syncs += 1
-                try:
-                    results = self.engine.sync(connection, warehouse=self.warehouse, namespace=self.namespace)
-                except ConnectionRejectedError as error:
-                    report.append({"connection": connection.name, "status": "failed", "error": str(error)})
-                    continue
-                streams = []
-                for result in results:
-                    if result.succeeded:
-                        self.raw_tables.add(result.table)
-                        self.model_tables.discard(result.table)
-                    entry = {"stream": result.stream, "table": result.table, "rows_loaded": result.rows_loaded}
-                    entry["status"] = "succeeded" if result.succeeded else "failed"
-                    if result.error:
-                        entry["error"] = result.error
-                    streams.append(entry)
-                status = "succeeded" if all(result.succeeded for result in results) else "failed"
-                report.append({"connection": connection.name, "status": status, "streams": streams})
+            report = [
+                (
+                    {"connection": connection.name, "status": "unchanged", "note": UNCHANGED_NOTE}
+                    if pending is None
+                    else self._sync(connection, pending)
+                )
+                for connection, pending in plan
+            ]
             row_counts = {table: self.warehouse.row_count(self.namespace, table) for table in sorted(self.raw_tables)}
             return {"connections": report, "source_tables": row_counts}
 

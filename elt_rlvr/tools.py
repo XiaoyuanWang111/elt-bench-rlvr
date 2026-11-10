@@ -67,14 +67,15 @@ class ELTTools:
     async def run_extract_load(
         self,
         connections: Annotated[
-            list[str] | None, "Names of the connections to run. Omit to run every connection in the file."
+            list[str] | None, "Connections to sync again in full. Omit to apply the whole file."
         ] = None,
     ) -> ToolResult:
-        """Run connections of pipeline/extract_load.yaml: extract their streams and load them into the warehouse.
+        """Apply pipeline/extract_load.yaml: extract the streams of its connections and load them into the warehouse.
 
+        A stream that has already loaded from its connection with the same source configuration and sync mode is
+        left alone, so after fixing one connection you can call this again. Name connections in `connections` to
+        sync them again in full; in an append mode that loads their rows a second time.
         Returns, per stream, the rows loaded or the error, and the row count of every source table loaded so far.
-        To retry a connection that failed, name it in `connections`: a connection that already succeeded and is
-        run again in an append mode loads its rows a second time.
         """
         return await self._run(self._session.run_extract_load, connections)
 

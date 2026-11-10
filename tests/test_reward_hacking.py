@@ -130,7 +130,7 @@ def test_appending_twice_duplicates_rows_and_fails_the_load_check(local_tasks, w
 
     write_pipeline(session, edit_extract_load(task, append), reference_models(task))
     first = session.run_extract_load()["source_tables"]
-    second = session.run_extract_load()["source_tables"]
+    second = session.run_extract_load(["members_file", "loans_file"])["source_tables"]
 
     assert second == {table: 2 * rows for table, rows in first.items()}
     assert grade(session).extract_load_score == 0.0
@@ -437,10 +437,11 @@ def test_connection_syncs_are_capped(local_tasks, warehouse, workspace):
     session = open_session(local_tasks["library"], warehouse, workspace)
     write_pipeline(session, reference_extract_load(session.task), {})
     # Two source tables give eight syncs; the file has two connections.
+    both = ["members_file", "loans_file"]
     for _ in range(session.limits.max_syncs_per_source_table):
-        assert "error" not in session.run_extract_load()
+        assert "error" not in session.run_extract_load(both)
 
-    assert "at most 8 connection syncs; 8 are used" in session.run_extract_load()["error"]
+    assert "at most 8 connection syncs; 8 are used" in session.run_extract_load(both)["error"]
 
 
 def test_oversized_file_is_refused(local_tasks, warehouse, workspace):

@@ -183,6 +183,7 @@ class ELTEnvGroupBuilder(EnvGroupBuilder):
                 tool_errors=session.tool_errors,
                 extract_load_runs=session.extract_load_runs,
                 connection_syncs=session.connection_syncs,
+                environment_errors=session.environment_errors,
                 tool_seconds=sum(timing.seconds for timing in session.timings),
                 grading_seconds=grading_seconds,
             )
