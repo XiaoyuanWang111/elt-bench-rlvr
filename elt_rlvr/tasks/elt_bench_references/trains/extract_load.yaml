@@ -1,0 +1,21 @@
+connections:
+  - name: cars_api
+    source:
+      type: custom_api
+      configuration: {}
+    streams:
+      - name: cars
+        sync_mode: full_refresh_append
+  - name: train_file
+    source:
+      type: file
+      configuration:
+        dataset_name: train
+        format: csv
+        url: https://drive.google.com/uc?export=download&id=1w5_eaQI7_bxn5zQVEOwB5WsIAkAu7VCB
+        provider:
+          https_public_web:
+            user_agent: false
+    streams:
+      - name: train
+        sync_mode: full_refresh_append

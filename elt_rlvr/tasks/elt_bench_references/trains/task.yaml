@@ -1,0 +1,4 @@
+foreign_keys:
+  - table: cars
+    column: train_id
+    references: train.id
