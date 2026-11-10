@@ -123,6 +123,9 @@ async def run(cli_config: CLIConfig) -> list[dict]:
             "stop_reason": trajectory.stop_reason,
             "reward": reward,
             **metrics,
+            # Every turn sends the whole conversation again, so prompt tokens add up over the turns.
+            "prompt_tokens": sum(transition.ob.length for transition in trajectory.transitions),
+            "sampled_tokens": sum(len(transition.ac.tokens) for transition in trajectory.transitions),
         }
         for index, (trajectory, (reward, metrics)) in enumerate(zip(trajectories, graded, strict=True))
     ]
