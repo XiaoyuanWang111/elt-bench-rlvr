@@ -4,19 +4,50 @@ Both tables are first written as CSV text and read back as strings, which is how
 so a value has one textual form whichever warehouse or driver produced it. Rows are aligned by sorting on the
 model's key. A required column matches when every aligned pair of values matches.
 
+A missing value is an empty cell, which is how ELT-Bench's ground truth writes it (the 202 files hold 4.3 million
+empty cells and 128 cells with a word such as ``null``). CSV cannot tell an empty string from a missing value, so
+the two compare equal.
+
 Two value rules are available:
 
 - ``STRICT`` (used for the reward): integers and text must be equal; other numbers may differ by a relative 1e-6.
-- ``OFFICIAL``: the rule of ELT-Bench's evaluator, a relative tolerance of 1e-2 on every number and
-  case-insensitive text. It is reported as a metric so that numbers stay comparable with the benchmark.
+  Text such as ``NA`` or ``null`` is text, not a missing value.
+- ``OFFICIAL``: the rule of ELT-Bench's evaluator, a relative tolerance of 1e-2 on every number,
+  case-insensitive text, and the words pandas reads as missing (``NA``, ``null``, ``None``, ...) counted as
+  missing. It is reported as a metric so that numbers stay comparable with the benchmark.
 """
 
 import io
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+# What pandas.read_csv reads as missing unless told otherwise.
+PANDAS_MISSING_TEXT = frozenset(
+    {
+        "#N/A",
+        "#N/A N/A",
+        "#NA",
+        "-1.#IND",
+        "-1.#QNAN",
+        "-NaN",
+        "-nan",
+        "1.#IND",
+        "1.#QNAN",
+        "<NA>",
+        "N/A",
+        "NA",
+        "NULL",
+        "NaN",
+        "None",
+        "n/a",
+        "nan",
+        "null",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -25,10 +56,18 @@ class ValueRule:
     absolute_tolerance: float
     integers_exact: bool
     case_sensitive_text: bool
+    missing_text: frozenset[str] = frozenset()
+    """Text that counts as a missing value, besides the empty cell."""
 
 
 STRICT = ValueRule(relative_tolerance=1e-6, absolute_tolerance=1e-9, integers_exact=True, case_sensitive_text=True)
-OFFICIAL = ValueRule(relative_tolerance=1e-2, absolute_tolerance=1e-9, integers_exact=False, case_sensitive_text=False)
+OFFICIAL = ValueRule(
+    relative_tolerance=1e-2,
+    absolute_tolerance=1e-9,
+    integers_exact=False,
+    case_sensitive_text=False,
+    missing_text=PANDAS_MISSING_TEXT,
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +88,18 @@ class TableComparison:
 TEXT_FRAME_MARK = "elt_rlvr_text_frame"
 
 
+def _read_text_csv(source: Path | io.StringIO) -> pd.DataFrame:
+    """Read a CSV with every cell as a string; only the empty cell is missing."""
+    text_frame = pd.read_csv(source, dtype=str, keep_default_na=False, na_values=[""])
+    text_frame.attrs[TEXT_FRAME_MARK] = True
+    return text_frame
+
+
+def read_ground_truth(path: Path) -> pd.DataFrame:
+    """Read a ground-truth CSV file as a text frame."""
+    return _read_text_csv(path)
+
+
 def to_text_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Round-trip a table through CSV so that every cell is a string or missing.
 
@@ -57,15 +108,19 @@ def to_text_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """
     if frame.attrs.get(TEXT_FRAME_MARK):
         return frame
-    text_frame = pd.read_csv(io.StringIO(frame.to_csv(index=False)), dtype=str, keep_default_na=True)
-    text_frame.attrs[TEXT_FRAME_MARK] = True
-    return text_frame
+    return _read_text_csv(io.StringIO(frame.to_csv(index=False)))
 
 
 def _as_numbers(values: pd.Series) -> np.ndarray | None:
-    """The column as floats if every present value is a number, else ``None``."""
+    """The column as floats if every present value is a number, else ``None``.
+
+    The text ``NaN`` is the number a warehouse exports for a float NaN, which a data frame read from the warehouse
+    holds as a missing value. In a column of numbers it therefore counts as a number; among other text it is text.
+    """
     numbers = pd.to_numeric(values, errors="coerce")
-    if int(numbers.isna().sum()) != int(values.isna().sum()):
+    not_a_number = values.astype("string").str.strip().str.lower().isin(["nan"]).to_numpy(dtype=bool, na_value=False)
+    unparsed = values.notna().to_numpy() & numbers.isna().to_numpy() & ~not_a_number
+    if unparsed.any():
         return None
     return numbers.to_numpy(dtype=float)
 
@@ -93,6 +148,9 @@ def _text_matches(expected: pd.Series, produced: pd.Series, rule: ValueRule) -> 
 
 
 def _column_matches(expected: pd.Series, produced: pd.Series, rule: ValueRule) -> bool:
+    if rule.missing_text:
+        expected = expected.where(~expected.isin(rule.missing_text))
+        produced = produced.where(~produced.isin(rule.missing_text))
     expected_numbers, produced_numbers = _as_numbers(expected), _as_numbers(produced)
     if expected_numbers is not None and produced_numbers is not None:
         return _numbers_match(expected_numbers, produced_numbers, rule)
@@ -100,9 +158,9 @@ def _column_matches(expected: pd.Series, produced: pd.Series, rule: ValueRule) -
 
 
 def _sort_values(column: pd.Series) -> pd.Series:
-    numbers = pd.to_numeric(column, errors="coerce")
-    if column.notna().any() and int(numbers.isna().sum()) == int(column.isna().sum()):
-        return numbers
+    numbers = _as_numbers(column) if column.notna().any() else None
+    if numbers is not None:
+        return pd.Series(numbers, index=column.index)
     return column.astype("string").str.strip()
 
 

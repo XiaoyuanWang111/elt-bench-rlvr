@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from elt_rlvr.extract_load.base import METADATA_COLUMN_PREFIX, ExtractLoadEngine
-from elt_rlvr.grading.compare import to_text_frame
+from elt_rlvr.grading.compare import read_ground_truth, to_text_frame
 from elt_rlvr.pipeline import parse_extract_load, read_models
 from elt_rlvr.task import TaskSpec
 from elt_rlvr.transform import run_models
@@ -146,10 +146,7 @@ class TaskReference:
                 reference_outputs = self._run_reference_models(self.namespace, self.namespace)
             if self.task.ground_truth_dir is not None:
                 self._expected = {
-                    model.name: to_text_frame(
-                        pd.read_csv(self._ground_truth_file(model.name), dtype=str, keep_default_na=True)
-                    )
-                    for model in self.task.data_models
+                    model.name: read_ground_truth(self._ground_truth_file(model.name)) for model in self.task.data_models
                 }
             else:
                 self._expected = reference_outputs
