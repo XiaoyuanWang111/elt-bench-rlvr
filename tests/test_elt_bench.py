@@ -4,6 +4,7 @@ The tests build a small checkout in the layout of ELT-Bench and render Airbyte r
 Airbyte nor a warehouse.
 """
 
+import dataclasses
 import json
 import subprocess
 from pathlib import Path
@@ -281,3 +282,34 @@ def test_error_text_returned_to_the_policy_has_secrets_removed(engine):
 def test_unknown_source_type_is_rejected(engine):
     with pytest.raises(ConnectionRejectedError, match="unknown source type"):
         engine.render_resources(_connection("mysql", {"host": "elt-postgres"}), "rollout_abc")
+
+
+def test_sync_job_that_runs_past_the_deadline_is_cancelled(engine):
+    settings = dataclasses.replace(engine._settings, sync_timeout_seconds=0.05, poll_seconds=0.01)
+    slow_engine = AirbyteEngine(settings=settings)
+    calls = []
+
+    def request(method, path, **arguments):
+        calls.append((method, path))
+        return {"jobId": 7, "status": "running"}
+
+    slow_engine._request = request
+
+    failure = slow_engine._run_sync_job("connection-id")
+
+    assert failure == "sync job did not finish within 0.05 seconds and was cancelled"
+    assert calls[0] == ("POST", "/jobs")
+    assert calls[-1] == ("DELETE", "/jobs/7")
+
+
+def test_sync_job_that_succeeds_is_not_cancelled(engine):
+    calls = []
+
+    def request(method, path, **arguments):
+        calls.append((method, path))
+        return {"jobId": 7, "status": "succeeded"}
+
+    engine._request = request
+
+    assert engine._run_sync_job("connection-id") is None
+    assert ("DELETE", "/jobs/7") not in calls

@@ -19,6 +19,7 @@ Three things stay on the engine's side of the trust boundary:
 """
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -39,6 +40,8 @@ from elt_rlvr.pipeline import ConnectionConfig
 from elt_rlvr.settings import destination_database
 from elt_rlvr.warehouse.base import Warehouse
 
+logger = logging.getLogger(__name__)
+
 SOURCE_RESOURCES = {
     "postgres": "airbyte_source_postgres",
     "mongodb": "airbyte_source_mongodb_v2",
@@ -52,6 +55,7 @@ SECRET_KEYS = frozenset({"password", "aws_secret_access_key", "secret_access_key
 LOCATOR_KEYS = frozenset({"host", "url", "endpoint", "bucket", "connection_string", "database"})
 SECRET_PREFIX, SECRET_SUFFIX = "<secret:", ">"
 PROVIDER_VERSION = "0.6.5"
+DEFAULT_SYNC_TIMEOUT_SECONDS = 1200.0
 SUCCEEDED, FAILED_STATES = "succeeded", ("failed", "cancelled", "incomplete")
 TOKEN_VARIABLE = "airbyte_token"
 MIN_SCRUBBED_LENGTH = 6
@@ -143,7 +147,8 @@ class AirbyteSettings:
     secrets: Mapping[str, str] = field(default_factory=dict, repr=False)
     allowed_locators: tuple[str, ...] = ()
     terraform_command: tuple[str, ...] = ("terraform",)
-    sync_timeout_seconds: float = 3600.0
+    sync_timeout_seconds: float = DEFAULT_SYNC_TIMEOUT_SECONDS
+    """A sync job still running after this long is cancelled and reported as failed."""
     poll_seconds: float = 5.0
 
 
@@ -191,6 +196,7 @@ def load_elt_bench_settings(elt_bench_root: Path, task_id: str, destination: str
         secrets=collect_secrets(sources),
         allowed_locators=tuple(_leaves(sources)),
         terraform_command=tuple(os.environ.get("ELT_RLVR_TERRAFORM", "terraform").split()),
+        sync_timeout_seconds=float(os.environ.get("ELT_RLVR_SYNC_TIMEOUT_SECONDS", DEFAULT_SYNC_TIMEOUT_SECONDS)),
     )
 
 
@@ -424,7 +430,12 @@ class AirbyteEngine(ExtractLoadEngine):
         return response.json()
 
     def _run_sync_job(self, connection_id: str) -> str | None:
-        """Trigger one sync and wait for it. Returns ``None`` on success, else why the job did not succeed."""
+        """Trigger one sync and wait for it. Returns ``None`` on success, else why the job did not succeed.
+
+        A job that is still running at the deadline is cancelled. Without that, a source that never reports a
+        last page keeps loading: ELT-Bench's REST API server answers every page request with the whole table, so
+        its connector reads a table of more rows than one page again and again.
+        """
         job = self._request("POST", "/jobs", json={"jobType": "sync", "connectionId": connection_id})
         deadline = time.monotonic() + self._settings.sync_timeout_seconds
         while time.monotonic() < deadline:
@@ -434,7 +445,11 @@ class AirbyteEngine(ExtractLoadEngine):
             if status in FAILED_STATES:
                 return f"sync job ended with status {status}"
             time.sleep(self._settings.poll_seconds)
-        return f"sync job did not finish within {self._settings.sync_timeout_seconds:g} seconds"
+        try:
+            self._request("DELETE", f"/jobs/{job['jobId']}")
+        except httpx.HTTPError as error:
+            logger.warning("cancelling sync job %s failed: %s", job["jobId"], error)
+        return f"sync job did not finish within {self._settings.sync_timeout_seconds:g} seconds and was cancelled"
 
     def sync(self, connection: ConnectionConfig, *, warehouse: Warehouse, namespace: str) -> list[StreamResult]:
         rendered = self.render_resources(connection, namespace)
