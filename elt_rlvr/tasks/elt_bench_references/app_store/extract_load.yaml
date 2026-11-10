@@ -1,0 +1,19 @@
+connections:
+  - name: playstore_mongo
+    source:
+      type: mongodb
+      configuration:
+        database_config:
+          self_managed_replica_set:
+            connection_string: mongodb://elt-mongodb:27017/?directConnection=true
+            database: app_store
+    streams:
+      - name: playstore
+        sync_mode: full_refresh_append
+  - name: reviews_api
+    source:
+      type: custom_api
+      configuration: {}
+    streams:
+      - name: user_reviews
+        sync_mode: full_refresh_append
