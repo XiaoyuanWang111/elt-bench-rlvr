@@ -1,5 +1,7 @@
 """The reward separates a correct pipeline from incomplete and wrong ones."""
 
+import dataclasses
+
 import pytest
 from support import (
     edit_extract_load,
@@ -26,6 +28,24 @@ def test_reference_pipeline_earns_full_reward(task_id, local_tasks, warehouse, w
     assert result.reward == 1.0
     assert result.official_extract_load
     assert result.official_transform == 1.0
+
+
+def test_ground_truth_with_upper_case_headers_grades_like_the_reference_tables(
+    local_tasks, warehouse, workspace, tmp_path
+):
+    # ELT-Bench's ground truth has upper-case headers, the reference models on DuckDB produce lower-case names.
+    task = local_tasks["library"]
+    session = open_session(task, warehouse, workspace)
+    solve(session)
+    for model in task.data_models:
+        frame = warehouse.read_frame(session.namespace, model.name)
+        frame.rename(columns=str.upper).to_csv(tmp_path / f"{model.name}.csv", index=False)
+    session.task = dataclasses.replace(task, ground_truth_dir=tmp_path)
+
+    result = grade(session)
+
+    assert result.reward == 1.0
+    assert all(all(columns.values()) for columns in result.model_columns.values())
 
 
 @pytest.mark.parametrize("task_id", list(LOCAL_TASKS))

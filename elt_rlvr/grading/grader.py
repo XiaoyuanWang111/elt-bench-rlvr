@@ -173,7 +173,8 @@ def _grade(session: RolloutSession, reference: TaskReference, heldouts: _HeldOut
             continue
         expected = reference.expected(model.name)
         strict = compare_tables(expected, frame, key=model.key, required_columns=model.columns, rule=STRICT)
-        matched[model.name] = set(strict.matched)
+        # Lower case, because the ground truth, the warehouse and data_model.yaml each case names their own way.
+        matched[model.name] = {name.lower() for name in strict.matched}
         # Whatever the strict rule accepts, the benchmark's looser rule accepts too.
         official_matches += (
             strict.is_full_match
@@ -201,10 +202,11 @@ def _grade(session: RolloutSession, reference: TaskReference, heldouts: _HeldOut
                 comparison = compare_tables(
                     heldout.expected[model.name], frame, key=model.key, required_columns=model.columns, rule=STRICT
                 )
-                matched[model.name] &= set(comparison.matched)
+                matched[model.name] &= {name.lower() for name in comparison.matched}
 
     model_columns = {
-        model.name: {column: column in matched[model.name] for column in model.columns} for model in task.data_models
+        model.name: {column: column.lower() in matched[model.name] for column in model.columns}
+        for model in task.data_models
     }
     transform_score = sum(len(matched[model.name]) / len(model.columns) for model in task.data_models) / len(
         task.data_models
