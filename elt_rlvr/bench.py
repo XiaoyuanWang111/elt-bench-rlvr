@@ -96,7 +96,9 @@ def main() -> None:
     parser.add_argument("--scale", type=int, default=50, help="multiplier of the source data size of a local task")
     parser.add_argument("--group-size", type=int, default=8, help="rollouts in the round with the sync cache")
     parser.add_argument(
-        "--direct-rollouts", type=int, help="rollouts in the round without the cache (default: group size)"
+        "--direct-rollouts",
+        type=int,
+        help="rollouts in the round without the cache (default: group size; 0 skips the round)",
     )
     parser.add_argument("--heldout-samples", type=int, default=2)
     parser.add_argument("--output", type=Path, default=Path("runs/latency.json"))
@@ -118,23 +120,19 @@ def main() -> None:
         start = time.perf_counter()
         reference.build()
         reference_seconds = time.perf_counter() - start
+        direct_rollouts = arguments.group_size if arguments.direct_rollouts is None else arguments.direct_rollouts
+        rounds = [(direct_rollouts, False), (arguments.group_size, True)]
         runs = [
             _measure(
                 task,
                 warehouse,
                 reference,
-                rollouts=arguments.direct_rollouts or arguments.group_size,
-                cache_syncs=False,
+                rollouts=rollouts,
+                cache_syncs=cache_syncs,
                 heldout_samples=arguments.heldout_samples,
-            ),
-            _measure(
-                task,
-                warehouse,
-                reference,
-                rollouts=arguments.group_size,
-                cache_syncs=True,
-                heldout_samples=arguments.heldout_samples,
-            ),
+            )
+            for rollouts, cache_syncs in rounds
+            if rollouts > 0
         ]
         source_rows = {table: reference.expected_row_count(table) for table in task.source_tables}
         warehouse.close()
