@@ -72,7 +72,9 @@ def test_value_looked_up_once_and_pasted_into_sql_loses_its_column(local_tasks, 
     )
     write_pipeline(session, None, models)
 
-    result = grade(session)
+    # A pasted flag stays right on a sample only if no flagged member lost every overdue loan; with six samples
+    # that cannot plausibly happen on all of them.
+    result = grade(session, RewardConfig(heldout_samples=6))
 
     assert result.transform_score_original == 1.0
     assert result.model_columns["member_activity"]["has_overdue_loan"] is False
