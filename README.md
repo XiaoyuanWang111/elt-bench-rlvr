@@ -116,6 +116,9 @@ Notes from setting ELT-Bench up on a new machine (Ubuntu 24.04, November 2026):
 - `mongo:8.0` does not start on Linux kernels 6.19 and newer.
 - Airbyte 2.5 asks for four CPUs per sync job. On a machine with four CPUs the job stays pending; install with
   `abctl local install --low-resource-mode`.
+- The S3 source that ships with Airbyte 2.5 (4.17.0) requires a `credentials` field that Terraform provider 0.6.5,
+  the version ELT-Bench pins and documents, cannot express. Setting the S3 source definition to version 4.12.2
+  (February 2025) makes the documented fields work.
 
 ## 3. Tinker RL optimization step
 
