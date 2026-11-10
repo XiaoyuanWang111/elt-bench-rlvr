@@ -46,6 +46,28 @@ def test_state_record_round_trips_and_is_absent_from_an_unknown_namespace():
     assert read_state(warehouse, "never_created") is None
 
 
+def test_state_record_keeps_line_breaks_quotes_and_backslashes():
+    # An error message of Terraform, as the sync cache stores it for a rejected connection.
+    state = {"rejection": 'Error: failure to invoke API\n  on main.tf.json line 43:\n{"status":422} C:\\x'}
+    warehouse = KeptWarehouse()
+    warehouse.create_namespace("kept")
+
+    write_state(warehouse, "kept", state)
+    stored = warehouse.run_query("SELECT state FROM kept.elt_rlvr_state", max_rows=1, timeout_seconds=10).rows[0][0]
+
+    assert read_state(warehouse, "kept") == state
+    # Nothing in the stored text that a SQL dialect could read as an escape or a quote.
+    assert set(stored) <= set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
+
+
+def test_state_record_that_cannot_be_read_counts_as_absent():
+    warehouse = KeptWarehouse()
+    warehouse.create_namespace("kept")
+    warehouse.create_table_from_query("kept", "elt_rlvr_state", "SELECT '{\"results\": [' AS state", timeout_seconds=10)
+
+    assert read_state(warehouse, "kept") is None
+
+
 def test_second_process_reuses_the_reference_load_of_a_persistent_warehouse(local_tasks):
     task = local_tasks["storefront"]
     warehouse = KeptWarehouse()
