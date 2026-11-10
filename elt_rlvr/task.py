@@ -1,5 +1,7 @@
 """What one ELT task consists of, split into what the policy sees and what only the grader sees."""
 
+import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -8,6 +10,7 @@ from typing import Any
 import yaml
 
 DATA_MODEL_FILE = "data_model.yaml"
+_PLAIN_DESCRIPTION = re.compile(r"^(?P<key>\s*(?:-\s+)?description:\s+)(?P<text>[^\s'\"|>].*?)\s*$")
 
 
 @dataclass(frozen=True)
@@ -70,9 +73,26 @@ def parse_foreign_keys(entries: list[Mapping[str, str]]) -> tuple[ForeignKey, ..
     return tuple(keys)
 
 
+def _parse_data_model(text: str) -> Any:
+    """Parse ``data_model.yaml``, also when a description is not valid YAML.
+
+    ELT-Bench writes descriptions as plain text. One of them (in ``world_development_indicators``) contains
+    ``: ``, which YAML reads as a nested mapping and rejects. When the file does not parse, every plain
+    description is quoted and the file is parsed again.
+    """
+    try:
+        return yaml.safe_load(text)
+    except yaml.YAMLError:
+        lines = []
+        for line in text.splitlines():
+            match = _PLAIN_DESCRIPTION.match(line)
+            lines.append(f"{match['key']}{json.dumps(match['text'])}" if match else line)
+        return yaml.safe_load("\n".join(lines))
+
+
 def read_data_models(workspace_dir: Path, keys: Mapping[str, list[str]]) -> tuple[DataModelSpec, ...]:
     """Read ``data_model.yaml`` (ELT-Bench format) and attach each model's row key."""
-    document = yaml.safe_load((workspace_dir / DATA_MODEL_FILE).read_text(encoding="utf-8"))
+    document = _parse_data_model((workspace_dir / DATA_MODEL_FILE).read_text(encoding="utf-8"))
     lowered_keys = {name.lower(): tuple(columns) for name, columns in keys.items()}
     return tuple(
         DataModelSpec(
