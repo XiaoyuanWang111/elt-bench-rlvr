@@ -4,6 +4,7 @@ A scripted policy emits assistant turns as tokens. Everything after that is the 
 the tool calls, the tool-use environment runs the tools, and the group builder grades the warehouse state.
 """
 
+import json
 import pickle
 
 import pytest
@@ -18,6 +19,7 @@ from tinker_cookbook.rl.rollouts import do_group_rollout, do_single_rollout
 from tinker_cookbook.rl.types import StopReason, TrajectoryGroup
 from tinker_cookbook.tool_use.types import ToolInput
 
+from elt_rlvr import rollout, train
 from elt_rlvr.env import ELTDatasetBuilder, ELTEnvGroupBuilder, EpisodeConfig
 from elt_rlvr.policies import (
     ScriptedPolicy,
@@ -175,3 +177,25 @@ async def test_dataset_builder_cycles_tasks_into_batches(local_tasks):
 
     assert [group.task.task_id for group in train.get_batch(0)] == ["library", "storefront", "clinic", "library"]
     assert all(group.group_size == 1 for group in evaluation.get_batch(0))
+
+
+async def test_reference_rollout_command_writes_rewards_and_a_transcript(tmp_path):
+    log_path = tmp_path / "rollout.jsonl"
+    config = rollout.CLIConfig(task="storefront", policy="reference", model_name=MODEL_NAME, log_path=str(log_path))
+
+    summaries = await rollout.run(config)
+
+    assert [summary["reward"] for summary in summaries] == [1.0]
+    records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+    assert records[-1]["summary"]["solved"] == 1.0
+    assert any("run_extract_load" in str(record.get("logs", {}).get("tool_call_0")) for record in records)
+
+
+def test_training_command_builds_a_cookbook_config_over_the_local_tasks(tmp_path):
+    config = train.build_config(
+        train.CLIConfig(tasks="library,clinic", model_name=MODEL_NAME, group_size=3, log_path=str(tmp_path / "run"))
+    )
+
+    assert [task.task_id for task in config.dataset_builder.tasks] == ["library", "clinic"]
+    assert config.dataset_builder.group_size == 3
+    assert config.dataset_builder.backend.warehouse == "duckdb"

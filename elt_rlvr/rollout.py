@@ -24,11 +24,10 @@ from tinker_cookbook.renderers import get_renderer
 from tinker_cookbook.rl.rollouts import do_single_rollout
 from tinker_cookbook.rl.types import Trajectory
 
-from elt_rlvr.backend import BackendConfig
 from elt_rlvr.env import ELTEnvGroupBuilder, EpisodeConfig
 from elt_rlvr.grading.grader import RewardConfig
 from elt_rlvr.policies import ScriptedPolicy, reference_messages
-from elt_rlvr.tasks import load_tasks
+from elt_rlvr.tasks import load_tasks, select_backend
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +78,11 @@ async def run(cli_config: CLIConfig) -> list[dict]:
         model_name=cli_config.model_name,
         renderer_name=renderer_name,
         group_size=cli_config.group_size,
-        backend=BackendConfig(warehouse=cli_config.warehouse, cache_syncs=cli_config.cache_syncs),
+        backend=select_backend(
+            warehouse=cli_config.warehouse,
+            elt_bench_root=cli_config.elt_bench_root,
+            cache_syncs=cli_config.cache_syncs,
+        ),
         reward=RewardConfig(heldout_samples=cli_config.heldout_samples),
         episode=EpisodeConfig(
             max_turns=cli_config.max_turns,

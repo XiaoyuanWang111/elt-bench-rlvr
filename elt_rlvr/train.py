@@ -12,10 +12,9 @@ import chz
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.rl.train import Config, main
 
-from elt_rlvr.backend import BackendConfig
 from elt_rlvr.env import ELTDatasetBuilder, EpisodeConfig
 from elt_rlvr.grading.grader import RewardConfig, RewardShape
-from elt_rlvr.tasks import load_tasks
+from elt_rlvr.tasks import load_tasks, select_backend
 
 
 @chz.chz
@@ -87,7 +86,11 @@ def build_config(cli_config: CLIConfig) -> Config:
         renderer_name=renderer_name,
         batch_size=cli_config.groups_per_batch,
         group_size=cli_config.group_size,
-        backend=BackendConfig(warehouse=cli_config.warehouse, cache_syncs=cli_config.cache_syncs),
+        backend=select_backend(
+            warehouse=cli_config.warehouse,
+            elt_bench_root=cli_config.elt_bench_root,
+            cache_syncs=cli_config.cache_syncs,
+        ),
         reward=RewardConfig(
             shape=cli_config.reward_shape,
             extract_load_weight=cli_config.extract_load_weight,

@@ -2,10 +2,21 @@
 
 from pathlib import Path
 
+from elt_rlvr.backend import BackendConfig
 from elt_rlvr.task import TaskSpec
 from elt_rlvr.tasks.local import build_local_tasks
 
 DEFAULT_TASK_DIRECTORY = Path.home() / ".cache" / "elt_rlvr" / "tasks"
+
+
+def select_backend(*, warehouse: str, elt_bench_root: str | None, cache_syncs: bool) -> BackendConfig:
+    """The backend of a run: the benchmark's own warehouse for official tasks, a credential-free one otherwise."""
+    if elt_bench_root is None:
+        return BackendConfig(warehouse=warehouse, cache_syncs=cache_syncs)
+    # Imported on use, like the official task loader below.
+    from elt_rlvr.tasks.elt_bench import elt_bench_backend  # noqa: PLC0415
+
+    return elt_bench_backend(Path(elt_bench_root), warehouse, cache_syncs=cache_syncs)
 
 
 def load_tasks(
