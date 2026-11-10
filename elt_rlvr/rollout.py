@@ -98,7 +98,7 @@ async def run(cli_config: CLIConfig) -> list[dict]:
         policies = [ScriptedPolicy(renderer, reference_messages(task)) for _ in envs]
     else:
         service_client = tinker.ServiceClient(base_url=cli_config.base_url)
-        sampling_client = service_client.create_sampling_client(
+        sampling_client = await service_client.create_sampling_client(
             base_model=cli_config.model_name, model_path=cli_config.load_checkpoint_path
         )
         completer = TinkerTokenCompleter(
