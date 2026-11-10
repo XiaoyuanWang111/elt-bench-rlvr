@@ -43,8 +43,9 @@ class EpisodeConfig:
 
     max_turns: int = 30
     max_tool_calls: int = 60
-    max_trajectory_tokens: int = 48_000
-    max_generation_tokens: int = 2_048
+    max_trajectory_tokens: int = 60_000
+    max_generation_tokens: int = 8_192
+    """Room for one turn. A reasoning model spends most of it before the tool call."""
     rollout_timeout_seconds: float = 1_800.0
     parse_error_retries: int = 2
     session_limits: SessionLimits = field(default_factory=SessionLimits)

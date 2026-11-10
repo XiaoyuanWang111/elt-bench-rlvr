@@ -26,7 +26,7 @@ class CLIConfig:
     lora_rank: int = 32
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
-    max_tokens: int = 2048
+    max_tokens: int = 8192
     temperature: float = 1.0
 
     # Tasks: local task names, or ELT-Bench task names when elt_bench_root is set.
@@ -40,7 +40,7 @@ class CLIConfig:
 
     # Episode
     max_turns: int = 30
-    max_trajectory_tokens: int = 48_000
+    max_trajectory_tokens: int = 60_000
 
     # Reward
     reward_shape: RewardShape = "multiplicative"

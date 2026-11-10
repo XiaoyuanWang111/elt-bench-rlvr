@@ -42,10 +42,10 @@ class CLIConfig:
     renderer_name: str | None = None
     load_checkpoint_path: str | None = None
     group_size: int = 1
-    max_tokens: int = 2048
+    max_tokens: int = 8192
     temperature: float = 1.0
     max_turns: int = 30
-    max_trajectory_tokens: int = 48_000
+    max_trajectory_tokens: int = 60_000
 
     elt_bench_root: str | None = None
     ground_truth_root: str | None = None
