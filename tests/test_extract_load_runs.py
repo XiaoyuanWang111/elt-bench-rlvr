@@ -162,7 +162,9 @@ def test_environment_fault_in_one_connection_does_not_hide_the_others(local_task
     report = session.run_extract_load()
 
     assert report["connections"][0]["status"] == "failed"
-    assert "the environment could not run this connection (RuntimeError: airbyte" in report["connections"][0]["error"]
+    # The policy learns that the fault is not its own, and nothing of what the environment raised.
+    error = report["connections"][0]["error"]
+    assert error == "the environment could not run this connection (RuntimeError); try it again"
     assert report["connections"][1]["status"] == "succeeded"
     assert list(report["source_tables"]) == ["loans"]
     assert session.environment_errors == 1

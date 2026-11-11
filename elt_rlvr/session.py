@@ -208,13 +208,13 @@ class RolloutSession:
         except Exception as error:
             # A fault of the environment. The call goes on, so that the policy still learns what the other
             # connections of this call loaded.
+            # The exception text is logged and not returned: it may hold values the policy must not see.
             logger.exception("syncing connection %s of %s failed", connection.name, self.namespace)
             self.environment_errors += 1
-            detail = f"{type(error).__name__}: {error}"[:300]
             return {
                 "connection": connection.name,
                 "status": "failed",
-                "error": f"the environment could not run this connection ({detail})",
+                "error": f"the environment could not run this connection ({type(error).__name__}); try it again",
             }
         entries: dict[str, dict[str, Any]] = {}
         streams = {stream.name: stream for stream in pending.streams}
