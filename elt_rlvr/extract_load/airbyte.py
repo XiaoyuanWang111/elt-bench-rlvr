@@ -27,7 +27,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -49,7 +49,6 @@ SOURCE_RESOURCES = {
     "s3": "airbyte_source_s3",
     "custom_api": "airbyte_source_custom",
 }
-DESTINATION_RESOURCES = {"snowflake": "airbyte_destination_snowflake"}
 INPUT_DIRECTORIES = {"snowflake": "inputs", "databricks": "inputs_databricks", "redshift": "inputs_redshift"}
 SECRET_KEYS = frozenset({"password", "aws_secret_access_key", "secret_access_key", "secret", "private_key", "token"})
 LOCATOR_KEYS = frozenset({"host", "url", "endpoint", "bucket", "connection_string", "database"})
@@ -160,14 +159,8 @@ class AirbyteSettings:
     poll_seconds: float = 5.0
 
 
-def load_elt_bench_settings(elt_bench_root: Path, task_id: str, destination: str = "snowflake") -> AirbyteSettings:
-    """Read the Airbyte and destination values that ELT-Bench's ``write_config.py`` generated for a task."""
-    if destination not in DESTINATION_RESOURCES:
-        raise ValueError(f"the Airbyte engine has no destination resource for {destination!r} yet")
-    config = yaml.safe_load((elt_bench_root / INPUT_DIRECTORIES[destination] / task_id / "config.yaml").read_text())
-    airbyte, warehouse = config["Airbyte"]["config"], config[destination]["config"]
-    sources = {key: value for key, value in config.items() if key not in ("Airbyte", destination)}
-    destination_configuration = {
+def _snowflake_destination(warehouse: Mapping[str, Any], credential: Mapping[str, Any]) -> dict[str, Any]:
+    configuration = {
         "host": f"{warehouse['account']}.snowflakecomputing.com",
         "role": warehouse["role"],
         "warehouse": warehouse["warehouse"],
@@ -175,12 +168,10 @@ def load_elt_bench_settings(elt_bench_root: Path, task_id: str, destination: str
         "username": warehouse["username"],
         "credentials": {"username_and_password": {"password": warehouse["password"]}},
     }
-    credential_file = elt_bench_root / "setup" / "destination" / f"{destination}_credential.json"
-    credential = json.loads(credential_file.read_text(encoding="utf-8")) if credential_file.is_file() else {}
     if credential.get("private_key_file"):
         # A key-pair credential replaces the benchmark's password user: Airbyte signs in as the same user as the
         # environment, so a deployment needs no password at all.
-        destination_configuration.update(
+        configuration.update(
             role=credential.get("role") or warehouse["role"],
             warehouse=credential.get("warehouse") or warehouse["warehouse"],
             username=credential["user"],
@@ -190,6 +181,37 @@ def load_elt_bench_settings(elt_bench_root: Path, task_id: str, destination: str
                 }
             },
         )
+    return configuration
+
+
+@dataclass(frozen=True)
+class DestinationKind:
+    """What the engine needs to know about one kind of Airbyte destination."""
+
+    resource: str
+    """Terraform resource type of the destination."""
+    configuration: Callable[[Mapping[str, Any], Mapping[str, Any]], dict[str, Any]]
+    """Builds the resource's configuration from the destination's values in the task's ``config.yaml`` and from
+    ELT-Bench's credential file for the destination. The engine adds the schema."""
+    uppercase_namespace: bool
+    """Whether the destination stores an unquoted schema name in upper case."""
+
+
+DESTINATIONS = {
+    "snowflake": DestinationKind("airbyte_destination_snowflake", _snowflake_destination, uppercase_namespace=True)
+}
+
+
+def load_elt_bench_settings(elt_bench_root: Path, task_id: str, destination: str = "snowflake") -> AirbyteSettings:
+    """Read the Airbyte and destination values that ELT-Bench's ``write_config.py`` generated for a task."""
+    if destination not in DESTINATIONS:
+        raise ValueError(f"the Airbyte engine has no destination resource for {destination!r} yet")
+    kind = DESTINATIONS[destination]
+    config = yaml.safe_load((elt_bench_root / INPUT_DIRECTORIES[destination] / task_id / "config.yaml").read_text())
+    airbyte, warehouse = config["Airbyte"]["config"], config[destination]["config"]
+    sources = {key: value for key, value in config.items() if key not in ("Airbyte", destination)}
+    credential_file = elt_bench_root / "setup" / "destination" / f"{destination}_credential.json"
+    credential = json.loads(credential_file.read_text(encoding="utf-8")) if credential_file.is_file() else {}
     definition_ids = {}
     if airbyte.get("custom_api_definition_id"):
         definition_ids["custom_api"] = airbyte["custom_api_definition_id"]
@@ -203,8 +225,9 @@ def load_elt_bench_settings(elt_bench_root: Path, task_id: str, destination: str
         client_id=os.environ.get("ELT_RLVR_AIRBYTE_CLIENT_ID"),
         client_secret=os.environ.get("ELT_RLVR_AIRBYTE_CLIENT_SECRET"),
         definition_ids=definition_ids,
-        destination_resource=DESTINATION_RESOURCES[destination],
-        destination_configuration=destination_configuration,
+        destination_resource=kind.resource,
+        destination_configuration=kind.configuration(warehouse, credential),
+        uppercase_namespace=kind.uppercase_namespace,
         secrets=collect_secrets(sources),
         allowed_locators=tuple(_leaves(sources)),
         terraform_command=tuple(os.environ.get("ELT_RLVR_TERRAFORM", "terraform").split()),
