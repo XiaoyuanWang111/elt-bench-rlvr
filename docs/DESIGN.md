@@ -64,8 +64,8 @@ group whose rollouts all score the same teaches nothing; graded rewards differ w
 The logged optimization steps had groups (1.0, 0.94, 0.94, 1.0) and (1.0, 1.0, 0.89, 0.95) on two local tasks
 and (0.0, 0.9) on the official task `trains`, whose other group, (0.9, 0.9), was dropped for that reason.
 Milestones that execution can verify (a table loaded, a column right) are already in the outcome reward, and
-paying them earlier would not change a per-trajectory advantage. A bonus for an event such as "a sync succeeded" can be collected by repeating the
-event, so there is none.
+paying them earlier would not change a per-trajectory advantage. A bonus for an event such as "a sync
+succeeded" can be collected by repeating the event, so there is none.
 
 ## 3. Implementation
 
