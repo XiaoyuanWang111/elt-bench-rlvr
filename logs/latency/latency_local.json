@@ -9,52 +9,52 @@
     "products": 1000,
     "reviews": 6000
   },
-  "reference_build_seconds": 0.202,
+  "reference_build_seconds": 0.213,
   "runs": [
     {
       "cache_syncs": false,
       "rollouts": 8,
-      "grading_seconds_per_rollout": 0.362,
+      "grading_seconds_per_rollout": 0.334,
       "tool_seconds_mean": {
         "read_file": 0.0001,
         "write_file": 0.0002,
-        "run_extract_load": 0.0988,
-        "run_transform": 0.0195,
-        "query": 0.0015,
+        "run_extract_load": 0.0903,
+        "run_transform": 0.0177,
+        "query": 0.0013,
         "submit": 0.0
       },
       "extract_load_seconds": [
-        0.118,
-        0.096,
-        0.095,
-        0.091,
-        0.115,
-        0.093,
-        0.092,
-        0.09
+        0.129,
+        0.088,
+        0.08,
+        0.081,
+        0.104,
+        0.08,
+        0.08,
+        0.079
       ]
     },
     {
       "cache_syncs": true,
       "rollouts": 8,
-      "grading_seconds_per_rollout": 0.381,
+      "grading_seconds_per_rollout": 0.344,
       "tool_seconds_mean": {
         "read_file": 0.0001,
         "write_file": 0.0002,
-        "run_extract_load": 0.0284,
-        "run_transform": 0.0182,
-        "query": 0.0014,
+        "run_extract_load": 0.0262,
+        "run_transform": 0.0165,
+        "query": 0.0012,
         "submit": 0.0
       },
       "extract_load_seconds": [
-        0.105,
-        0.017,
-        0.017,
-        0.017,
-        0.017,
-        0.017,
-        0.018,
-        0.018
+        0.096,
+        0.016,
+        0.016,
+        0.016,
+        0.016,
+        0.016,
+        0.016,
+        0.019
       ],
       "snapshot_hits": 21,
       "snapshot_misses": 3

@@ -1,13 +1,19 @@
 # Logs
 
 Outputs of the commands in the top-level README, run on one machine (Ubuntu 24.04, 4 CPUs, Airbyte 2.5 in
-low-resource mode, a Snowflake trial account, Tinker). The runs used a checkout with exactly the tree of the
-commit named in `commit.txt`; later commits change only documentation and these logs.
+low-resource mode, a Snowflake trial account, Tinker). Two runs:
 
-What was changed in the files: the machine's home directory, the Snowflake account, and the identifiers of Tinker
-runs and Snowflake queries are replaced by placeholders, and terminal colour codes and the request logging of the
-Snowflake and HTTP clients are removed. Every command was given `log_path=runs/acceptance4/...` to choose where
-its transcript is written. The transcripts hold rows of the benchmark's public data.
+- Everything without Tinker (sections 1 and 2 except the Tinker rollouts, and the latency measurements) ran on a
+  checkout with exactly the tree of the commit named in `commit.txt`.
+- The Tinker rollouts and both optimization steps (`2_official/rollout_tinker_*`, `3_training/`) ran at commit
+  `df75b5e`. The package differs between the two commits only by the reference pipeline of `retails`
+  (`git diff df75b5e <commit> -- elt_rlvr`).
+
+Later commits change only documentation and these logs. What was changed in the files: the machine's home
+directory, the Snowflake account, and the identifiers of Tinker runs and Snowflake queries are replaced by
+placeholders, and terminal colour codes and the request logging of the Snowflake and HTTP clients are removed.
+Every command was given a `log_path=` under `runs/` to choose where its transcript is written. The transcripts
+hold rows of the benchmark's public data.
 
 A `*.txt` file is what the command printed. A `*.jsonl` file is the transcript that the rollout command writes:
 one record per assistant turn with its tool calls and their results, then one summary record per rollout. The
@@ -17,7 +23,7 @@ summary lists every source table and required column with whether it counted.
 
 | File | Command | Result |
 | --- | --- | --- |
-| `1_local/pytest.txt` | `uv run pytest -v` | 496 passed |
+| `1_local/pytest.txt` | `uv run pytest -v` | 508 passed |
 | `1_local/rollout_reference_storefront.*` | `uv run python -m elt_rlvr.rollout task=storefront policy=reference` | reward 1.0 |
 
 ## 2. Rollouts on official ELT-Bench tasks
@@ -25,22 +31,30 @@ summary lists every source table and required column with whether it counted.
 All through Airbyte and Snowflake: `uv run python -m elt_rlvr.rollout task=<task> policy=<policy>
 elt_bench_root=/path/to/ELT-Bench warehouse=snowflake`, with `model_name=Qwen/Qwen3.6-35B-A3B` for `policy=tinker`.
 The sync cache was emptied before the run, so the reference rollouts wait for real Airbyte syncs (five minutes
-for the three connections of `human_resources`). The REST API connector of this deployment is registered with
-`scripts/register_api_connector.py --single-page`; without that the 64,286-row table of `app_store` does not
-finish.
+for the three connections of `human_resources`, about nine for the five of `retails`, with
+`ELT_RLVR_SYNC_TIMEOUT_SECONDS=3600`). The REST API connector of this deployment is registered with
+`scripts/register_api_connector.py --single-page`; without that the 64,286-row table of `app_store` and the
+200,000-row table of `retails` do not finish.
 
 | File | Task, policy | Result |
 | --- | --- | --- |
 | `2_official/rollout_reference_human_resources.*` | `human_resources`, `reference` | reward 1.0 |
 | `2_official/rollout_reference_trains.*` | `trains`, `reference` | reward 1.0 |
 | `2_official/rollout_reference_app_store.*` | `app_store`, `reference` | reward 1.0 |
+| `2_official/rollout_reference_retails.*` | `retails`, `reference` | reward 1.0 (eight source tables, 7.1 million rows) |
 | `2_official/rollout_tinker_trains.*` | `trains`, `tinker`, `group_size=2` | rewards 0.9 and 1.0. Rollout 0 matches the ground truth in every column and loses `run_east_and_has_less_than_4_cars` on held-out data: for a train without cars its count is NULL, and `NULL < 4` is not true. |
 | `2_official/rollout_tinker_human_resources.*` | `human_resources`, `tinker` | reward 0.96: every load right, 15 of 16 columns right. `per_salary_over_20000` is rounded to two decimals, which the benchmark's 1% tolerance accepts (`official_transform` 1.0) and the exact comparison does not. The episode ended at its 30 turns without `submit`. |
 | `2_official/survey_tasks.txt` | `uv run python scripts/survey_tasks.py /path/to/ELT-Bench` | the loader reads all 100 tasks; 40 REST API tables in 30 tasks have at least 9,973 rows |
 
 A reference rollout earns 1.0 only if the loaded rows equal the reference load and the models reproduce the
 benchmark's ground truth. Its held-out check compares the reference models with themselves and shows only that
-the samples can be drawn.
+the samples can be drawn. Whether the held-out check fails sound SQL is shown by two gradings of `retails` with
+`scripts/grade_pipeline.py` (command in the top-level README), under the seeds 7, 11 and 13:
+
+| File | Models graded | Result |
+| --- | --- | --- |
+| `2_official/retails_authors.txt` | the worked example in ELT-Bench's `example/retails/`, by the benchmark's authors | 1.0 under each seed |
+| `2_official/retails_variant.txt` | the same, with `LEFT JOIN num_customers_cte` in `nations.sql` made an inner join | 0.65 under each seed: every column right on the original data, and `nations` wrong on every sample, which has a nation without customers |
 
 `2_official/earlier/` holds rollouts sampled at earlier commits that the documents cite:
 

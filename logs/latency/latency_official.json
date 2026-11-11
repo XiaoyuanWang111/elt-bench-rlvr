@@ -8,40 +8,40 @@
     "location": 8,
     "position": 4
   },
-  "reference_build_seconds": 4.607,
+  "reference_build_seconds": 4.594,
   "runs": [
     {
       "cache_syncs": false,
       "rollouts": 1,
-      "grading_seconds_per_rollout": 37.337,
+      "grading_seconds_per_rollout": 37.573,
       "tool_seconds_mean": {
-        "read_file": 0.0002,
-        "write_file": 0.0003,
-        "run_extract_load": 290.28,
-        "run_transform": 2.9311,
-        "query": 0.1433,
+        "read_file": 0.0001,
+        "write_file": 0.0002,
+        "run_extract_load": 265.6936,
+        "run_transform": 2.3279,
+        "query": 0.1089,
         "submit": 0.0
       },
       "extract_load_seconds": [
-        290.28
+        265.694
       ]
     },
     {
       "cache_syncs": true,
       "rollouts": 3,
-      "grading_seconds_per_rollout": 18.758,
+      "grading_seconds_per_rollout": 14.913,
       "tool_seconds_mean": {
-        "read_file": 0.0002,
+        "read_file": 0.0001,
         "write_file": 0.0002,
-        "run_extract_load": 7.3606,
-        "run_transform": 3.0975,
-        "query": 0.1999,
+        "run_extract_load": 7.7733,
+        "run_transform": 2.6293,
+        "query": 0.0978,
         "submit": 0.0
       },
       "extract_load_seconds": [
-        8.938,
-        7.134,
-        6.01
+        10.578,
+        6.92,
+        5.821
       ],
       "snapshot_hits": 9,
       "snapshot_misses": 0
