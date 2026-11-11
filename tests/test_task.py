@@ -3,7 +3,9 @@
 import pytest
 import yaml
 
+from elt_rlvr.settings import process_directory
 from elt_rlvr.task import read_data_models
+from elt_rlvr.tasks import load_tasks
 
 DATA_MODEL = """\
 models:
@@ -36,3 +38,10 @@ def test_read_data_models_file_that_is_broken_elsewhere_still_fails(tmp_path):
 
     with pytest.raises(yaml.YAMLError):
         read_data_models(tmp_path, {})
+
+
+def test_local_tasks_are_written_to_a_directory_of_this_process():
+    task = load_tasks(["library"])[0]
+
+    assert task.workspace_dir.is_relative_to(process_directory("tasks"))
+    assert process_directory("tasks").parent.name.startswith("elt_rlvr_")

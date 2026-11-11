@@ -19,6 +19,7 @@ import yaml
 
 from elt_rlvr.backend import BackendConfig
 from elt_rlvr.extract_load.airbyte import INPUT_DIRECTORIES, redact_secrets
+from elt_rlvr.settings import process_directory
 from elt_rlvr.task import TaskSpec, parse_foreign_keys, read_data_models
 
 WORKSPACE_DOCUMENTS = (
@@ -29,7 +30,6 @@ WORKSPACE_DOCUMENTS = (
     "source_postgres.md",
     "source_s3.md",
 )
-DEFAULT_WORKSPACE_DIRECTORY = Path.home() / ".cache" / "elt_rlvr" / "elt_bench"
 
 
 def reference_directory(task_id: str) -> Path | None:
@@ -63,7 +63,7 @@ def load_elt_bench_task(
     *,
     destination: str = "snowflake",
     ground_truth_root: Path | None = None,
-    workspace_directory: Path = DEFAULT_WORKSPACE_DIRECTORY,
+    workspace_directory: Path | None = None,
 ) -> TaskSpec:
     """Load one official task.
 
@@ -73,12 +73,12 @@ def load_elt_bench_task(
         destination: Warehouse the inputs were generated for.
         ground_truth_root: Directory with ``<task>/<model>.csv``; defaults to
             ``<elt_bench_root>/ground_truth/gt_<destination>``.
-        workspace_directory: Where the derived workspaces are written.
+        workspace_directory: Where the derived workspaces are written; by default a directory of this process.
     """
     inputs_dir = elt_bench_root / INPUT_DIRECTORIES[destination] / task_id
     if not inputs_dir.is_dir():
         raise FileNotFoundError(f"{inputs_dir} does not exist; run ELT-Bench's setup/write_config.py first")
-    workspace_dir = workspace_directory / destination / task_id
+    workspace_dir = (workspace_directory or process_directory("elt_bench")) / destination / task_id
     build_workspace(inputs_dir, workspace_dir, destination)
 
     evaluation = elt_bench_root / "evaluation"
