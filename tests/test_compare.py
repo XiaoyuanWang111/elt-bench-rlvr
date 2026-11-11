@@ -22,6 +22,15 @@ def test_compare_composite_key_with_one_wrong_key_column_matches_nothing():
     assert result.reason == "the key values differ"
 
 
+def test_compare_rows_with_equal_keys_line_up_on_the_other_columns():
+    expected = pd.DataFrame({"team": ["a", "a", "b"], "player": ["x", "y", "z"], "goals": [1, 2, 3]})
+    produced = expected.iloc[[1, 0, 2]].reset_index(drop=True)
+
+    result = compare_tables(expected, produced, key=["team"])
+
+    assert result.matched == ("team", "player", "goals")
+
+
 def test_compare_key_given_in_another_case_is_found():
     expected = pd.DataFrame({"id": [1, 2], "total": [5, 7]})
     produced = pd.DataFrame({"id": [2, 1], "total": [7, 5]})

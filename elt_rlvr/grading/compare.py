@@ -185,7 +185,8 @@ def compare_tables(
     Args:
         expected: The correct table.
         produced: The table the pipeline built. Extra columns are ignored.
-        key: Columns of ``expected`` that identify a row; both tables are sorted on them.
+        key: Columns of ``expected`` that identify a row. Both tables are sorted on them, then on the other
+            graded columns.
         required_columns: Columns to grade; defaults to every column of ``expected``.
         rule: How two values are compared.
     """
@@ -209,8 +210,9 @@ def compare_tables(
     key_columns = [expected_names[name.lower()] for name in key if name.lower() in expected_names]
     if any(name not in present for name in key_columns):
         return nothing("a key column is missing")
-    # Without a usable key, fall back to ordering both tables by all graded columns they share.
-    order_columns = key_columns or present
+    # Rows are ordered by the key and then, as the benchmark does, by every other graded column the tables share,
+    # so that rows with equal keys line up the same way in both.
+    order_columns = key_columns + [name for name in present if name not in key_columns]
     expected_sorted = _sorted_by(expected, order_columns)
     produced_sorted = _sorted_by(produced, [produced_names[name.lower()] for name in order_columns])
 
