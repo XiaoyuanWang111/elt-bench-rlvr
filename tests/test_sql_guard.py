@@ -342,11 +342,49 @@ def test_vet_query_snowflake_stage_reference_is_rejected(sql):
 
 @pytest.mark.parametrize(
     "sql",
-    ["select * from table(result_scan(last_query_id()))", "select system$whitelist()", "select get_ddl('table', 'x')"],
+    ["select result_scan(last_query_id())", "select system$whitelist()", "select get_ddl('table', 'x')"],
 )
 def test_vet_query_snowflake_catalog_function_is_rejected(sql):
     with pytest.raises(SqlRejectedError, match="is not available"):
         _vet(sql, dialect="snowflake")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "select * from table('ns_b.orders')",
+        "select * from table('reference_library.member_activity')",
+        "select * from table(members)",
+        "select * from table($1)",
+        "select * from table(to_query('select * from ns_b.orders'))",
+        "select * from table(result_scan(last_query_id()))",
+        "select query_text from table(information_schema.query_history(result_limit => 100))",
+        "select * from members m join table('ns_b.orders') o on o.member_id = m.member_id",
+        "with other as (select * from table('ns_b.orders')) select * from other",
+        "select (select count(*) from table('ns_b.orders')) from members",
+        "select * from members, lateral to_query('select * from ns_b.orders')",
+    ],
+)
+def test_vet_query_snowflake_table_keyword_cannot_name_a_relation_or_a_catalog_function(sql):
+    with pytest.raises(SqlRejectedError, match="accept only these table functions"):
+        _vet(sql, dialect="snowflake")
+
+
+def test_vet_query_snowflake_function_called_through_a_schema_is_rejected():
+    with pytest.raises(SqlRejectedError, match="qualified name"):
+        _vet("select information_schema.current_task_graphs() from members", dialect="snowflake")
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "select f.value from members m, table(flatten(input => m.tags)) f",
+        "select seq4() from table(generator(rowcount => 3))",
+        "select s.value from members m, table(split_to_table(m.name, ' ')) s",
+    ],
+)
+def test_vet_query_snowflake_table_function_that_reads_no_relation_is_accepted(sql):
+    assert _vet(sql, dialect="snowflake").sql
 
 
 def test_vet_query_function_the_dialect_cannot_express_is_rejected():

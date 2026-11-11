@@ -6,6 +6,7 @@ the re-emitted text, so a string that sqlglot and the warehouse would parse diff
 past the check.
 """
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -36,7 +37,10 @@ FORBIDDEN_NODES: tuple[type[exp.Expression], ...] = (
 )
 
 # Table functions never read a named relation, so none of them can reach another namespace or a file.
-ALLOWED_TABLE_FUNCTIONS = frozenset({"unnest", "generate_series", "range", "flatten", "explode"})
+ALLOWED_TABLE_FUNCTIONS = frozenset(
+    {"unnest", "generate_series", "range", "flatten", "explode", "generator", "split_to_table"}
+)
+_ANSI_CODES = re.compile(r"\x1b\[[0-9;]*m")
 
 # Functions that read files, catalogs, settings or run SQL given as a string.
 FORBIDDEN_FUNCTION_NAMES = frozenset(
@@ -97,6 +101,20 @@ def _check_function(function: exp.Func) -> None:
     name = _function_name(function)
     if name in FORBIDDEN_FUNCTION_NAMES or name.startswith(FORBIDDEN_FUNCTION_PREFIXES):
         raise SqlRejectedError(f"function {name}() is not available")
+
+
+def _check_table_expression(node: exp.TableFromRows | exp.Lateral) -> None:
+    """``TABLE(...)`` and ``LATERAL`` may produce rows only from a table function that reads no named relation.
+
+    Snowflake also takes ``TABLE('<name>')`` as a table reference by name and ``TABLE(<function>)`` as a call of
+    any table function, among them functions of ``information_schema`` that return the account's query history.
+    """
+    inner = node.this
+    if isinstance(node, exp.Lateral) and not isinstance(inner, exp.Func):
+        return
+    if not isinstance(inner, exp.Func) or _function_name(inner) not in ALLOWED_TABLE_FUNCTIONS:
+        allowed = ", ".join(sorted(ALLOWED_TABLE_FUNCTIONS))
+        raise SqlRejectedError(f"TABLE(...) and LATERAL accept only these table functions: {allowed}")
 
 
 def _identifier_key(identifier: exp.Identifier, dialect: str) -> str:
@@ -178,7 +196,8 @@ def vet_query(sql: str, *, dialect: str, table_namespaces: Mapping[str, str]) ->
 
     Raises:
         SqlRejectedError: The statement is not a single SELECT, names a table outside ``table_namespaces``,
-            qualifies a table name, or calls a forbidden function.
+            qualifies a table or function name, names a table through ``TABLE(...)``, or calls a forbidden
+            function.
     """
     root = _parse_single_query(sql, dialect)
 
@@ -187,6 +206,10 @@ def vet_query(sql: str, *, dialect: str, table_namespaces: Mapping[str, str]) ->
             raise SqlRejectedError(f"{type(node).__name__.upper()} is not allowed in a query")
         if isinstance(node, exp.Func):
             _check_function(node)
+        if isinstance(node, exp.TableFromRows | exp.Lateral):
+            _check_table_expression(node)
+        if isinstance(node, exp.Dot) and isinstance(node.expression, exp.Func):
+            raise SqlRejectedError("a function cannot be called through a qualified name")
 
     canonical_names = {name.lower(): name for name in table_namespaces}
     referenced: list[str] = []
