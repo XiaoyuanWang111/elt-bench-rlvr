@@ -6,6 +6,7 @@ the rollouts. It lives in namespaces that no tool can name, and it is built once
 
 import hashlib
 import threading
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -75,7 +76,6 @@ class TaskReference:
     _built: bool = False
     _expected: dict[str, pd.DataFrame] = field(default_factory=dict)
     _tables: dict[str, _ReferenceTable] = field(default_factory=dict)
-    _heldout_count: int = 0
 
     def __post_init__(self) -> None:
         self.namespace = self.namespace or f"reference_{self.task.task_id}"
@@ -241,9 +241,8 @@ class TaskReference:
         """
         if not self.has_pipeline:
             raise ReferencePipelineError(f"task {self.task.task_id} has no reference pipeline for held-out grading")
-        with self._lock:
-            self._heldout_count += 1
-            namespace = f"{self.namespace}_heldout_{self._heldout_count}"
+        # Random, so that two processes that grade the same task in one warehouse do not share a namespace.
+        namespace = f"{self.namespace}_heldout_{uuid.uuid4().hex[:8]}"
         try:
             for attempt in range(MAX_HELDOUT_DRAWS):
                 self.warehouse.create_namespace(namespace)

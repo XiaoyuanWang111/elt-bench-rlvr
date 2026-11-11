@@ -119,6 +119,25 @@ def test_failed_held_out_draw_fails_the_whole_group(local_tasks, warehouse, work
     assert all("held-out samples could not be drawn" in grade.grader_error for grade in grades)
 
 
+def _reference_of(task, warehouse, workspace) -> TaskReference:
+    reference = TaskReference(task, warehouse, open_session(task, warehouse, workspace).engine)
+    reference.build()
+    return reference
+
+
+def _rows(warehouse, sql: str) -> list:
+    return warehouse.run_query(sql, max_rows=10_000, timeout_seconds=10).rows
+
+
+def test_two_references_of_one_task_draw_their_samples_into_different_namespaces(local_tasks, warehouse, workspace):
+    task = local_tasks["library"]
+    # Two processes that grade the same task in one warehouse each have their own reference object.
+    first = _reference_of(task, warehouse, workspace / "first")
+    second = _reference_of(task, warehouse, workspace / "second")
+
+    assert first.draw_heldout(1, 70.0).namespace != second.draw_heldout(1, 70.0).namespace
+
+
 def test_grader_builds_only_the_required_models(local_tasks, warehouse, workspace, monkeypatch):
     task = local_tasks["library"]
     session = open_session(task, warehouse, workspace)
