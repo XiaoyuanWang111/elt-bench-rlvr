@@ -9,51 +9,51 @@
     "products": 1000,
     "reviews": 6000
   },
-  "reference_build_seconds": 0.203,
+  "reference_build_seconds": 0.195,
   "runs": [
     {
       "cache_syncs": false,
       "rollouts": 8,
-      "grading_seconds_per_rollout": 0.244,
+      "grading_seconds_per_rollout": 0.39,
       "tool_seconds_mean": {
         "read_file": 0.0002,
         "write_file": 0.0002,
-        "run_extract_load": 0.1046,
-        "run_transform": 0.0199,
-        "query": 0.0016,
+        "run_extract_load": 0.0984,
+        "run_transform": 0.0191,
+        "query": 0.0015,
         "submit": 0.0
       },
       "extract_load_seconds": [
-        0.122,
-        0.112,
-        0.101,
         0.095,
-        0.119,
-        0.094,
+        0.097,
+        0.095,
+        0.095,
+        0.117,
         0.096,
-        0.098
+        0.096,
+        0.096
       ]
     },
     {
       "cache_syncs": true,
       "rollouts": 8,
-      "grading_seconds_per_rollout": 0.254,
+      "grading_seconds_per_rollout": 0.364,
       "tool_seconds_mean": {
-        "read_file": 0.0003,
+        "read_file": 0.0001,
         "write_file": 0.0002,
-        "run_extract_load": 0.0297,
-        "run_transform": 0.02,
+        "run_extract_load": 0.0314,
+        "run_transform": 0.0196,
         "query": 0.0015,
         "submit": 0.0
       },
       "extract_load_seconds": [
         0.111,
-        0.02,
         0.018,
         0.018,
         0.018,
+        0.033,
+        0.019,
         0.017,
-        0.018,
         0.018
       ],
       "snapshot_hits": 21,
