@@ -139,6 +139,29 @@ def test_model_table_of_the_wrong_size_is_never_fetched(local_tasks, warehouse, 
 # ---- raw tables that did not come from the sources -----------------------------------------------------------------
 
 
+@pytest.mark.parametrize("change", ["remove_connection", "change_sync_mode", "delete_file"])
+def test_source_table_counts_only_if_the_submitted_file_is_what_loaded_it(change, local_tasks, warehouse, workspace):
+    task = local_tasks["library"]
+    session = open_session(task, warehouse, workspace)
+    solve(session)
+
+    def edit(document):
+        if change == "remove_connection":
+            document["connections"] = [c for c in document["connections"] if c["name"] == "members_file"]
+        else:
+            for connection in document["connections"]:
+                if connection["name"] != "members_file":
+                    connection["streams"][0]["sync_mode"] = "full_refresh_append"
+
+    # The tables stay in the warehouse as they were loaded; only the file changes.
+    session.write_file(EXTRACT_LOAD_PATH, "" if change == "delete_file" else edit_extract_load(task, edit))
+
+    result = grade(session)
+
+    assert result.official_extract_load
+    assert result.source_tables == {"members": change != "delete_file", "loans": False}
+
+
 def test_fabricated_source_table_with_the_right_row_count_is_not_a_load(local_tasks, warehouse, workspace):
     task = local_tasks["library"]
     reference = TaskReference(task, warehouse, open_session(task, warehouse, workspace / "probe").engine)

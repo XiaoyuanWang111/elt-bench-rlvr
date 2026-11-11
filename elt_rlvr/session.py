@@ -167,6 +167,23 @@ class RolloutSession:
         source = json.dumps([connection.source_type, connection.configuration], sort_keys=True, default=str)
         return (connection.name, source, stream.name, stream.sync_mode)
 
+    def submitted_source_tables(self) -> set[str]:
+        """Lower-cased names of the tables that the extract-load file, as it stands, has loaded.
+
+        A stream counts if it has loaded from its connection with the source configuration and sync mode the file
+        gives it now. A stream that was removed from the file, or changed after its last sync, does not.
+        """
+        try:
+            connections = parse_extract_load((self.workspace / EXTRACT_LOAD_PATH).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return set()
+        return {
+            table_name_for_stream(stream.name).lower()
+            for connection in connections
+            for stream in connection.streams
+            if self._stream_key(connection, stream) in self.loaded_streams
+        }
+
     def _sync(self, connection: ConnectionConfig, pending: ConnectionConfig) -> dict[str, Any]:
         """Sync the streams of ``pending`` and describe every stream of ``connection`` for the policy."""
         self.connection_syncs += 1

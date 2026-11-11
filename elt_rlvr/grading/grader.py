@@ -1,6 +1,7 @@
 """Turn the state a rollout left behind into a reward.
 
-Extract-load score: the share of required source tables whose loaded rows equal the reference load.
+Extract-load score: the share of required source tables whose loaded rows equal the reference load. A table counts
+only if the submitted extract-load file still declares the stream as it was loaded.
 
 Transform score: the grader re-runs the submitted model files itself, in a fresh namespace, and compares each
 required table with the expected one column by column. It does this on the original data and on held-out samples
@@ -165,7 +166,8 @@ def _grade(session: RolloutSession, reference: TaskReference, heldouts: _HeldOut
         for table in task.source_tables
     }
     # Only a table the extract-load engine wrote can count as loaded; a model with a source table's name cannot.
-    loaded = {table.lower() for table in session.raw_tables}
+    # The submitted extract-load file must also be the one that loaded it.
+    loaded = {table.lower() for table in session.raw_tables} & session.submitted_source_tables()
     source_tables = {table: table.lower() in loaded and check.content_matches for table, check in checks.items()}
     extract_load_score = sum(source_tables.values()) / len(source_tables)
     official_extract_load = all(check.row_count_matches for check in checks.values())
