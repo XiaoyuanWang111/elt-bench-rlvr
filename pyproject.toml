@@ -41,11 +41,7 @@ pythonpath = [".", "tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 timeout = 60
-markers = [
-    "tokenizer: needs a public tokenizer download from Hugging Face (no credentials)",
-    "tinker: needs TINKER_API_KEY",
-    "snowflake: needs Snowflake and Airbyte credentials",
-]
+markers = ["tokenizer: needs a public tokenizer download from Hugging Face (no credentials)"]
 
 [tool.ruff]
 line-length = 121
