@@ -42,7 +42,7 @@
         ],
         "engine_kind": "local",
         "engine_options": {
-          "sources_root": "~/.cache/elt_rlvr/tasks/storefront/sources"
+          "sources_root": "/tmp/elt_rlvr_zbq47y5l/tasks/storefront/sources"
         },
         "reference_dir": "<class 'pathlib.PosixPath'>",
         "ground_truth_dir": null,
@@ -111,7 +111,7 @@
         ],
         "engine_kind": "local",
         "engine_options": {
-          "sources_root": "~/.cache/elt_rlvr/tasks/clinic/sources"
+          "sources_root": "/tmp/elt_rlvr_zbq47y5l/tasks/clinic/sources"
         },
         "reference_dir": "<class 'pathlib.PosixPath'>",
         "ground_truth_dir": null,
@@ -158,6 +158,7 @@
       "extract_load_weight": 0.3,
       "heldout_samples": 2,
       "heldout_sample_percent": 70.0,
+      "heldout_edge_cases": true,
       "turn_cost": 0.0,
       "grading_threads": 8
     },
@@ -182,14 +183,14 @@
   "model_name": "Qwen/Qwen3.6-35B-A3B",
   "recipe_name": "elt_bench_rlvr",
   "max_tokens": 8192,
-  "log_path": "runs/acceptance3/train",
+  "log_path": "runs/acceptance4/train",
   "eval_every": 0,
   "save_every": 0,
   "evaluator_builders": [],
   "load_checkpoint_path": null,
   "renderer_name": "qwen3_5",
   "wandb_project": null,
-  "wandb_name": "elt-Qwen-Qwen3.6-35B-A3B-4group-2batch-2026-11-10-23-51",
+  "wandb_name": "elt-Qwen-Qwen3.6-35B-A3B-4group-2batch-2026-11-11-02-58",
   "session_name": null,
   "kl_penalty_coef": 0.0,
   "kl_discount_factor": 0.0,

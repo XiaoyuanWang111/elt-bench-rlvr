@@ -1,1 +1,1 @@
-8c456bee42ce568b31c6248669318747edb2dc62 [scripts] Add a command that pins or registers an Airbyte source definition
+68f6b7f33462f067ee4acb13a055a21964d78f3d [docs] Name the rollout option as the command line takes it

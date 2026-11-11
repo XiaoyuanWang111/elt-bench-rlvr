@@ -9,51 +9,51 @@
     "products": 1000,
     "reviews": 6000
   },
-  "reference_build_seconds": 0.195,
+  "reference_build_seconds": 0.202,
   "runs": [
     {
       "cache_syncs": false,
       "rollouts": 8,
-      "grading_seconds_per_rollout": 0.39,
+      "grading_seconds_per_rollout": 0.362,
       "tool_seconds_mean": {
-        "read_file": 0.0002,
+        "read_file": 0.0001,
         "write_file": 0.0002,
-        "run_extract_load": 0.0984,
-        "run_transform": 0.0191,
+        "run_extract_load": 0.0988,
+        "run_transform": 0.0195,
         "query": 0.0015,
         "submit": 0.0
       },
       "extract_load_seconds": [
-        0.095,
-        0.097,
-        0.095,
-        0.095,
-        0.117,
+        0.118,
         0.096,
-        0.096,
-        0.096
+        0.095,
+        0.091,
+        0.115,
+        0.093,
+        0.092,
+        0.09
       ]
     },
     {
       "cache_syncs": true,
       "rollouts": 8,
-      "grading_seconds_per_rollout": 0.364,
+      "grading_seconds_per_rollout": 0.381,
       "tool_seconds_mean": {
         "read_file": 0.0001,
         "write_file": 0.0002,
-        "run_extract_load": 0.0314,
-        "run_transform": 0.0196,
-        "query": 0.0015,
+        "run_extract_load": 0.0284,
+        "run_transform": 0.0182,
+        "query": 0.0014,
         "submit": 0.0
       },
       "extract_load_seconds": [
-        0.111,
-        0.018,
-        0.018,
-        0.018,
-        0.033,
-        0.019,
+        0.105,
         0.017,
+        0.017,
+        0.017,
+        0.017,
+        0.017,
+        0.018,
         0.018
       ],
       "snapshot_hits": 21,
