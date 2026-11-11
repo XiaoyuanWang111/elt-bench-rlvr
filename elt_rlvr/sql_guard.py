@@ -174,7 +174,7 @@ def _parse_single_query(sql: str, dialect: str) -> exp.Query:
             if statement is not None and not isinstance(statement, exp.Semicolon)
         ]
     except SqlglotError as error:
-        raise SqlRejectedError(f"SQL syntax error: {error}") from error
+        raise SqlRejectedError(f"SQL syntax error: {_ANSI_CODES.sub('', str(error))}") from error
     if len(statements) != 1:
         raise SqlRejectedError(f"expected exactly one statement, found {len(statements)}")
     root = statements[0]

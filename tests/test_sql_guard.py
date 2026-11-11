@@ -314,8 +314,10 @@ def test_vet_query_over_long_statement_is_rejected():
 
 @pytest.mark.parametrize("sql", ["select * from members where", "selec * from members", "select (1", "select * from"])
 def test_vet_query_syntax_error_is_rejected(sql):
-    with pytest.raises(SqlRejectedError, match="SQL syntax error"):
+    with pytest.raises(SqlRejectedError, match="SQL syntax error") as rejection:
         _vet(sql)
+
+    assert "\x1b" not in str(rejection.value)
 
 
 # ---- dialects ----------------------------------------------------------------------------------------------------
