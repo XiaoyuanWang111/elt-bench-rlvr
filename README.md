@@ -36,22 +36,38 @@ start from the same state.
 
 - `EL`: the share of required source tables whose loaded rows equal the reference load (same columns, same multiset
   of rows), not only the same row count. The tables are graded as the rollout left them, and a table counts only
-  if the submitted `extract_load.yaml` still describes the stream that loaded it. Columns that a sync adds
-  (`_airbyte_*`, `_ab_*`) are ignored.
+  if the submitted `extract_load.yaml` still describes every stream whose sync wrote the rows it holds now (same
+  connection name, source configuration and sync mode). Columns that a sync adds (`_airbyte_*`, `_ab_*`) are
+  ignored.
 - `T`: the mean over the required tables of the share of required columns that are right. The grader runs the
   submitted model files itself in a fresh namespace, on the tables the pipeline loaded. A column counts only if it
   matches on the original data and on every held-out sample of the source tables, where the expected output comes
-  from the task's reference models. A sample keeps a random 70% of the rows of each table, drops the rows whose
-  parent row was dropped, and then removes all child rows of one parent row per foreign key: a parent without
-  children is the case that tells an outer join from an inner one, and random sampling produces it only by
-  chance.
+  from the task's reference models. A table that does not build, or has another number of rows, on the original
+  data or on a sample loses all its columns.
+
+A held-out sample keeps a random 70% of the rows of each table and drops the rows whose parent row was dropped.
+Two more changes aim at SQL that is right on the original data only (`RewardConfig.heldout_edge_cases` turns
+them off):
+
+- All child rows of one parent row per foreign key are removed. A parent without children tells an outer join
+  from an inner one, and a NULL that was kept from one that was replaced; random sampling produces such a row
+  only by chance. A sample in which a key has fewer than two parents with children is drawn again, up to five
+  times.
+- The key values of every parent table move to other rows, and the rows that refer to them follow. SQL that maps
+  a key to a value looked up with `query` then returns the value of another row.
+
+This is stricter than ELT-Bench on purpose: it grades cases that the benchmark's data does not contain, by the
+reference pipeline's reading of the column descriptions. The prompt and `documentation/pipeline.md` tell the model
+what changed data looks like.
 
 Held-out grading and the content check of loads need a reference pipeline for the task. The local tasks have one;
 of the official tasks, three have one so far (`elt_rlvr/tasks/elt_bench_references/`): `human_resources`
 (Postgres, S3, flat file), `trains` (REST API, flat file) and `app_store` (MongoDB, REST API). An official task
-without one is graded against the benchmark's ground truth and row counts only.
+without one is graded against the benchmark's ground truth and row counts only, so constants, pasted values and
+a wrong load with the right row count are paid there.
 
-Every required column weighs the same, whether the model computes it or copies it from a source table.
+Within a table every required column weighs the same, whether the model computes it or copies it from a source
+table, and every table weighs the same.
 
 `RewardConfig` also offers a multiplicative shape (`EL * (0.3 + 0.7 * T)`) and a binary one, the number of held-out
 samples and a per-turn cost. Metrics report the benchmark's own measures next to the reward:
@@ -64,7 +80,8 @@ uv sync --extra dev                      # credential-free path
 uv sync --extra dev --extra snowflake    # adds the Snowflake driver for official tasks
 ```
 
-tinker-cookbook's renderer dependency ships wheels for Linux and macOS, so run the commands below on one of those.
+`tml-renderers`, a dependency of tinker-cookbook, ships wheels for Linux and macOS, so run the commands below on
+one of those.
 
 ## 1. Credential-free local integration test
 
@@ -75,7 +92,8 @@ uv run python -m elt_rlvr.rollout task=storefront policy=reference
 
 `pytest` needs no credentials. The tests in `tests/test_environment.py` run complete rollouts through
 tinker-cookbook's rollout loop on DuckDB: a scripted policy emits assistant turns as tokens, the renderer parses the
-tool calls, the tools run, and the group is graded. They download one public tokenizer from Hugging Face. The other
+tool calls, the tools run, and the group is graded. They download one public tokenizer from Hugging Face, and so
+does the rollout command (the tokenizer of `model_name`, by default `Qwen/Qwen3.6-35B-A3B`). The other
 test files cover the reward, the reward-hacking cases listed below, the official-task loader, and each module on its
 own (SQL guard, pipeline files, transforms, engines, sync cache, warehouse, table comparison, session).
 
@@ -95,9 +113,15 @@ Prerequisites, all from ELT-Bench's own README: a checkout with Airbyte and the 
 
 ```bash
 export TINKER_API_KEY=...
+# Needed when Airbyte runs under abctl on this machine; see "Signing in and reaching Airbyte" below.
+export ELT_RLVR_AIRBYTE_PROVIDER_URL=http://localhost:8000/api/public/v1
+export ELT_RLVR_AIRBYTE_CLIENT_ID=... ELT_RLVR_AIRBYTE_CLIENT_SECRET=...
 uv run python -m elt_rlvr.rollout task=human_resources policy=tinker \
     elt_bench_root=/path/to/ELT-Bench warehouse=snowflake model_name=Qwen/Qwen3.6-35B-A3B
 ```
+
+The command builds the task's reference load before the first rollout, so a deployment that cannot sync fails
+within the first minutes and not after the model has used its turns.
 
 `policy=reference` plays the reference pipeline of a task that ships one under
 `elt_rlvr/tasks/elt_bench_references/` (`human_resources`, `trains`, `app_store`), which checks the whole stack
@@ -144,22 +168,28 @@ it against connectors that are two years newer.
   `abctl local install --low-resource-mode`.
 - The S3 source that ships with Airbyte 2.5 (4.17.0) requires a `credentials` field that provider 0.6.5 cannot
   express. Setting the S3 source definition to version 4.12.2 (February 2025) makes the documented fields work:
-  `python scripts/airbyte_source_definition.py --elt-bench-root /path/to/ELT-Bench pin S3 4.12.2`.
+  `uv run python scripts/airbyte_source_definition.py --elt-bench-root /path/to/ELT-Bench pin S3 4.12.2`.
 - The MongoDB source that ships with Airbyte 2.5 (`airbyte/source-mongodb` 3.0) requires `databases` where the
   provider writes `database`. Registering `airbyte/source-mongodb-v2:1.5.19` as a custom source definition makes
   the documented fields work:
-  `python scripts/airbyte_source_definition.py --elt-bench-root /path/to/ELT-Bench register "MongoDb 1.5.19" airbyte/source-mongodb-v2 1.5.19`
+  `uv run python scripts/airbyte_source_definition.py --elt-bench-root /path/to/ELT-Bench register "MongoDb 1.5.19" airbyte/source-mongodb-v2 1.5.19`
   prints the definition id to put into `ELT_RLVR_AIRBYTE_DEFINITION_IDS='{"mongodb": "<definition id>"}'`.
 - ELT-Bench's README registers its REST API connector in Airbyte's web UI.
   `scripts/register_api_connector.py` does it through the API. If publishing fails with "No declarative manifest
   image version found in database for major version 6", Airbyte could not list the image tags on Docker Hub (it
   got 403 on this machine); adding the row for `6.33.4` to the table `declarative_manifest_image_version` of
   Airbyte's database resolved it.
-- ELT-Bench's REST API server ignores `limit` and `offset` and answers every request with the whole table, and
-  the connector's paginator stops only after a page of fewer than 9,973 rows. For the 40 API tables with at least
-  that many rows (in 30 tasks; `scripts/survey_tasks.py` lists them) the sync reads the table again and again.
-  `--single-page` of the script registers the connector without the paginator. The engine cancels any sync job
-  that runs past `ELT_RLVR_SYNC_TIMEOUT_SECONDS`.
+- ELT-Bench's REST API server (`elt-docker/rest_api/app.py`) reads neither `limit` nor `offset` and answers
+  every request with the whole table, and the connector's paginator stops only after a page of fewer than 9,973
+  rows. On this deployment a sync of `user_reviews` of `app_store` (64,286 rows) kept reading the table again
+  and again and was stopped by hand; 40 API tables in 30 tasks have at least 9,973 rows
+  (`scripts/survey_tasks.py` lists them). `uv run python scripts/register_api_connector.py --elt-bench-root
+  /path/to/ELT-Bench --single-page` registers the connector without the paginator, and the `app_store` result
+  below was obtained with it. The engine cancels any sync job that runs past `ELT_RLVR_SYNC_TIMEOUT_SECONDS`.
+
+One process at a time should build a task's reference load or a new sync snapshot in a warehouse database: two
+processes that start the same build at the same moment replace each other's namespace. Rollouts and held-out
+samples of different processes use namespaces of their own.
 
 ## 3. Tinker RL optimization step
 
@@ -181,14 +211,14 @@ are in [logs/](logs/README.md).
 
 | Run | Result |
 | --- | --- |
-| `uv run pytest -v` | 472 passed |
+| `uv run pytest -v` | 496 passed |
 | Reference pipeline on a local task (`storefront`) | reward 1.0 |
-| Reference pipeline on the official tasks `human_resources`, `trains`, `app_store`, every sync through Airbyte | reward 1.0 each, against the benchmark's ground truth and on held-out data |
-| Qwen3.6-35B-A3B sampled through Tinker on `trains`, two rollouts | rewards 1.0 and 1.0 |
-| Qwen3.6-35B-A3B sampled through Tinker on `human_resources` | reward 0.61: every load right; the episode reached its 30 turns before `positions` built, so 7 of 16 columns count |
-| One optimization step on `storefront` and `clinic`, four rollouts each | rewards (0.94, 0.94, 1.0, 0.94) and (1.0, 0.95, 0.95, 1.0); both groups enter the step |
-| One optimization step on the official task `trains`, two groups of two rollouts | rewards (0.8, 1.0) and (0.7, 1.0); both groups enter the step |
-| Two rollouts sampled at an earlier commit, graded again with `scripts/regrade_transcript.py` under three held-out seeds | 0.3 (`trains`: an inner join drops a train without cars) and 0.91 (`human_resources`: NULL replaced by 0 in two columns) under every seed. Both match the benchmark's ground truth in every column. |
+| Reference pipeline on the official tasks `human_resources`, `trains`, `app_store`; every sync runs through Airbyte, and `app_store` uses the REST API connector registered with `--single-page` | reward 1.0 each: the loads equal the reference load and the models reproduce the benchmark's ground truth |
+| Qwen3.6-35B-A3B sampled through Tinker on `trains`, two rollouts | rewards 0.9 and 1.0. The first matches the ground truth in every column and loses one column on held-out data: for a train without cars it compares a missing count with 4. |
+| Qwen3.6-35B-A3B sampled through Tinker on `human_resources` | reward 0.96: every load right, 15 of 16 columns right. The model rounds a percentage to two decimals, which the benchmark's 1% tolerance accepts and the exact comparison does not. The episode ended at its 30 turns without `submit` and is graded all the same. |
+| One optimization step on `storefront` and `clinic`, four rollouts each | rewards (1.0, 0.94, 0.94, 1.0) and (1.0, 1.0, 0.89, 0.95); both groups enter the step |
+| One optimization step on the official task `trains`, two groups of two rollouts | rewards (0.9, 0.9) and (0.0, 0.9). tinker-cookbook drops the first group, whose rollouts earned the same, and takes the step on the second. The rollout with 0 stopped calling tools after it wrote its extract-load file. |
+| Three rollouts sampled at an earlier commit, graded again with `scripts/regrade_transcript.py` under the held-out seeds 7, 11 and 13 | 0.3 (`trains`: an inner join drops a train without cars), 0.91 (`human_resources`: NULL replaced by 0 in two columns) and 1.0 (`trains`: correct SQL) under each seed. The first two match the benchmark's ground truth in every column, and earned 1.0 under some seeds while a sample was random rows only. |
 
 ## Reward-hacking tests
 
@@ -197,21 +227,21 @@ the pipeline.
 
 | Attempt | Why it fails |
 | --- | --- |
-| Return the expected table as constants | Graded again on held-out samples of the source tables. |
-| Paste a value looked up with `query` into the SQL | The column fails on held-out samples. |
+| Return the expected table as constants | Graded again on held-out samples of the source tables (tasks with a reference pipeline). |
+| Paste a value looked up with `query` into the SQL | On a held-out sample the value belongs to another row: child rows are gone and parent keys have moved (tasks with a reference pipeline; a table that no foreign key refers to keeps its keys). |
 | Leave a correct table in the warehouse and submit other files | The grader runs the submitted model files; it does not read the rollout's model tables. A loaded table counts only if the submitted extract-load file still describes its stream. |
 | Build a table with the right row count instead of loading the source | Loads are compared by content, and only tables written by the engine count. |
 | Sync a stream twice in an append mode | Duplicated rows fail the content comparison. |
-| Point a source at a ground-truth file, a URL or another host | Sources are limited to the locations in the task's `config.yaml`. |
+| Point a source at a ground-truth file, a URL or another host | A host, URL, bucket, connection string or database in a configuration must be part of a value in the task's `config.yaml`. |
 | Read the reference pipeline or grader files | File tools are confined to the workspace; the reference lives outside it. |
 | Write outside `pipeline/` | Only the two kinds of pipeline file are writable. |
-| Read another rollout's or the grader's tables | SQL is parsed, limited to the rollout's tables (a CTE name counts only inside its scope) and re-emitted with qualified names. |
+| Read another rollout's or the grader's tables, or the account's query history | SQL is parsed, limited to the rollout's tables (a CTE name counts only inside its scope) and re-emitted with qualified names. `TABLE(...)` and `LATERAL` accept only table functions that read no relation, and a function cannot be called through a schema. All SQL runs on one warehouse connection: the guard is the wall, not a role per rollout. |
 | `read_csv`, `COPY`, `ATTACH`, DDL, DML, several statements | Rejected by the SQL guard; DuckDB also runs with external access off and a locked configuration. |
 | Rely on the benchmark's 1% numeric tolerance | Integers and text must be equal; other numbers may differ by a relative 1e-6. |
 | Terraform template in a connector field, to read a file or a variable of the host | Escaped in values and refused in keys before rendering. |
 | Read a secret or the API token from an error message | Secrets appear to the model as placeholders, reach Terraform as sensitive variables, and are removed from returned errors. |
-| Make the grader fail | Any grader error gives reward 0. A held-out draw that fails does so for every rollout that needs it. |
-| Run away with time or output | Statement timeout, row and file limits on the tools, a budget of connection syncs, a deadline for each sync job. The grader fetches a model table only if it has the expected number of rows. |
+| Make the grader fail | Any grader error gives reward 0. If a held-out draw fails, every rollout of the group gets 0, so none gains from not needing the samples. |
+| Run away with time or output | Statement timeout, row and file limits on the tools, a budget of connection syncs, a deadline for each sync job. The grader builds only the required models and what they read, and fetches a table only if it has the expected number of rows. |
 
 ## Latency
 
@@ -227,15 +257,17 @@ loaded becomes a snapshot; a failed one runs again the next time.
 
 | Mean seconds | `human_resources` (Airbyte, Snowflake) | `storefront` (DuckDB, 25,000 source rows) |
 | --- | --- | --- |
-| `run_extract_load`, synced by the engine | 301 | 0.098 |
-| `run_extract_load`, served by the sync cache | 6.7 | 0.031 |
-| `run_transform` | 2.8 | 0.020 |
-| `query` | 0.1 | 0.002 |
-| Grading, per rollout | 8.7 | 0.36 |
+| `run_extract_load`, synced by the engine | 290 | 0.099 |
+| `run_extract_load`, served by the sync cache | 7.4 | 0.028 |
+| `run_transform` | 3.1 | 0.018 |
+| `query` | 0.2 | 0.001 |
+| Grading, per rollout | 18.8 | 0.38 |
 
 The first row is the round without the cache: one rollout with three connections on the official task, eight
 rollouts on the local one. The other rows are the round with the cache, three and eight rollouts graded as one
-group. A group shares its held-out samples, so one official rollout graded alone takes 25 s.
+group; on the local task the first of the eight rollouts makes the snapshots, so its three syncs are in the
+mean. A group shares its held-out samples, and drawing them is most of the grading time on Snowflake: one
+official rollout graded alone takes 37 s.
 
 ## Adding a reference pipeline for an official task
 
@@ -267,6 +299,11 @@ elt_rlvr/
   extract_load/     engine interface, local engine, Airbyte engine, sync cache
   grading/          table comparison, reference state, reward
   tasks/            local tasks, ELT-Bench task loader
+  task.py           a task: workspace, source tables, data models, references
+  prompts.py        system prompt and task message
+  policies.py       scripted policies for tests and for `policy=reference`
+  backend.py        which warehouse and engine a run uses
+  settings.py       environment variables, per-process directory
   train.py          training entry point
   rollout.py        single group rollout
   bench.py          latency measurement
