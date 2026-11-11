@@ -30,10 +30,6 @@ class ExtractLoadEngine(ABC):
     """Runs sync jobs. One engine instance serves many rollouts and must be thread-safe."""
 
     @abstractmethod
-    def source_types(self) -> tuple[str, ...]:
-        """Source types this engine can read."""
-
-    @abstractmethod
     def sync(self, connection: ConnectionConfig, *, warehouse: Warehouse, namespace: str) -> list[StreamResult]:
         """Run one sync of ``connection`` into ``namespace`` and report every stream.
 

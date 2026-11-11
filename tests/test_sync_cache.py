@@ -30,9 +30,6 @@ class CountingEngine(ExtractLoadEngine):
         self.entered = threading.Event()
         self.hold: threading.Event | None = None
 
-    def source_types(self) -> tuple[str, ...]:
-        return ("counting",)
-
     def sync_variant(self, connection) -> str:
         return self.variant
 

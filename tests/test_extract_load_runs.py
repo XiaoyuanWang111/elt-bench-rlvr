@@ -144,9 +144,6 @@ class _FaultyEngine(ExtractLoadEngine):
     def __init__(self, inner: ExtractLoadEngine, faulty: str, error: Exception) -> None:
         self._inner, self._faulty, self._error = inner, faulty, error
 
-    def source_types(self):
-        return self._inner.source_types()
-
     def sync(self, connection, *, warehouse, namespace):
         if connection.name == self._faulty:
             raise self._error

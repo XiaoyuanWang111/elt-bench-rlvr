@@ -26,9 +26,6 @@ class CountingEngine(ExtractLoadEngine):
         self._inner = inner
         self.syncs = 0
 
-    def source_types(self):
-        return self._inner.source_types()
-
     def sync(self, connection, *, warehouse, namespace):
         self.syncs += 1
         return self._inner.sync(connection, warehouse=warehouse, namespace=namespace)

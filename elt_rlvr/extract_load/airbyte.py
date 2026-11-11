@@ -291,9 +291,6 @@ class AirbyteEngine(ExtractLoadEngine):
                     raise RuntimeError(f"terraform init failed: {result.stderr[-1000:]}")
         return PROVIDER_DIRECTORY
 
-    def source_types(self) -> tuple[str, ...]:
-        return tuple(SOURCE_RESOURCES)
-
     def sync_variant(self, connection: ConnectionConfig) -> str:
         return self._settings.definition_ids.get(connection.source_type, "")
 

@@ -57,9 +57,6 @@ class CachingEngine(ExtractLoadEngine):
         self.hits = 0
         self.misses = 0
 
-    def source_types(self) -> tuple[str, ...]:
-        return self._inner.source_types()
-
     def sync_variant(self, connection: ConnectionConfig) -> str:
         return self._inner.sync_variant(connection)
 
