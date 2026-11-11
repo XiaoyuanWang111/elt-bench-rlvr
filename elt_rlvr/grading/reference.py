@@ -51,10 +51,15 @@ class _ReferenceTable:
     fingerprint: TableFingerprint | None = None
 
 
+SYNC_COLUMN_PREFIXES = (METADATA_COLUMN_PREFIX, "_ab_")
+"""Columns that describe a sync and not a source row: the loader's own, and those that Airbyte's file and
+change-data-capture sources add (the file's name and modification time, log positions)."""
+
+
 def source_columns(columns: list[Column]) -> dict[str, Column]:
     """The columns that carry source data, keyed by lower-cased name."""
     return {
-        column.name.lower(): column for column in columns if not column.name.lower().startswith(METADATA_COLUMN_PREFIX)
+        column.name.lower(): column for column in columns if not column.name.lower().startswith(SYNC_COLUMN_PREFIXES)
     }
 
 

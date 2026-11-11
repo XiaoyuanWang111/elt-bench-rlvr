@@ -14,7 +14,21 @@ from support import (
 )
 
 from elt_rlvr.grading.grader import RewardConfig, combine
+from elt_rlvr.grading.reference import source_columns
 from elt_rlvr.tasks.local import LOCAL_TASKS
+from elt_rlvr.warehouse.base import Column
+
+
+def test_columns_that_a_sync_adds_are_not_source_columns():
+    columns = [
+        Column("id", "BIGINT", True),
+        Column("_airbyte_raw_id", "VARCHAR", False),
+        Column("_ab_source_file_last_modified", "VARCHAR", False),
+        Column("_AB_CDC_LSN", "BIGINT", True),
+        Column("ab_test_group", "VARCHAR", False),
+    ]
+
+    assert list(source_columns(columns)) == ["id", "ab_test_group"]
 
 
 @pytest.mark.parametrize("task_id", list(LOCAL_TASKS))
