@@ -51,6 +51,8 @@ of the official tasks, three have one so far (`elt_rlvr/tasks/elt_bench_referenc
 (Postgres, S3, flat file), `trains` (REST API, flat file) and `app_store` (MongoDB, REST API). An official task
 without one is graded against the benchmark's ground truth and row counts only.
 
+Every required column weighs the same, whether the model computes it or copies it from a source table.
+
 `RewardConfig` also offers a multiplicative shape (`EL * (0.3 + 0.7 * T)`) and a binary one, the number of held-out
 samples and a per-turn cost. Metrics report the benchmark's own measures next to the reward:
 `official_extract_load` (row counts, stage 1) and `official_transform` (the benchmark's value tolerance, stage 2).
