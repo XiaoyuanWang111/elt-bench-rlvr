@@ -53,7 +53,10 @@ are allowed. Column names must match `data_model.yaml`.
 
 Call `submit` when the pipeline is complete. The files under `pipeline/` are your submission. The model files are
 run again from the raw tables when the pipeline is graded, and they must also give correct results when the source
-data changes. A raw table counts as loaded only if `extract_load.yaml` still describes its stream as it was loaded:
-after you rename a connection, change its source configuration or a stream's sync mode, call `run_extract_load`
-again before you submit. That syncs the changed streams again, and in an append mode it adds their rows a second
-time.
+data changes: with fewer rows, with a row whose related rows in another table are gone (a customer without
+orders), and with other key values. A model that fails or returns another number of rows on changed data earns
+nothing for its table.
+
+A raw table counts as loaded only if `extract_load.yaml` still describes its stream as it was loaded: after you
+rename a connection, change its source configuration or a stream's sync mode, call `run_extract_load` again
+before you submit. That syncs the changed streams again, and in an append mode it adds their rows a second time.

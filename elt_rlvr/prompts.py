@@ -27,7 +27,7 @@ Rules:
 - Write SQL in the {dialect} dialect and refer to tables by their bare names.
 - Your submission is the set of files under pipeline/. The models are run again for grading, on the current data \
 and on changed source data, so compute every value from the tables. Do not paste values that you looked up into the \
-SQL.
+SQL. Changed data has fewer rows, rows whose related rows in another table are gone, and other key values.
 - A source table counts as loaded only if pipeline/extract_load.yaml still describes its stream as it was loaded. \
 After you change a connection, call run_extract_load again before you submit.
 """
