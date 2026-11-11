@@ -61,8 +61,10 @@ reference pipeline's reading of the column descriptions. The prompt and `documen
 what changed data looks like.
 
 Held-out grading and the content check of loads need a reference pipeline for the task. The local tasks have one;
-of the official tasks, three have one so far (`elt_rlvr/tasks/elt_bench_references/`): `human_resources`
-(Postgres, S3, flat file), `trains` (REST API, flat file) and `app_store` (MongoDB, REST API). An official task
+of the official tasks, four have one so far (`elt_rlvr/tasks/elt_bench_references/`): `human_resources`
+(Postgres, S3, flat file), `trains` (REST API, flat file), `app_store` (MongoDB, REST API) and `retails` (all
+five kinds). Their models were written from the column descriptions of `data_model.yaml`. For `retails`
+ELT-Bench ships a worked example by its authors, which is graded against the reference below. An official task
 without one is graded against the benchmark's ground truth and row counts only, so constants, pasted values and
 a wrong load with the right row count are paid there.
 
@@ -124,8 +126,18 @@ The command builds the task's reference load before the first rollout, so a depl
 within the first minutes and not after the model has used its turns.
 
 `policy=reference` plays the reference pipeline of a task that ships one under
-`elt_rlvr/tasks/elt_bench_references/` (`human_resources`, `trains`, `app_store`), which checks the whole stack
-without sampling. Any of the 100 tasks can be named in `task=`.
+`elt_rlvr/tasks/elt_bench_references/` (`human_resources`, `trains`, `app_store`, `retails`), which checks the
+whole stack without sampling. Any of the 100 tasks can be named in `task=`. The Postgres connection of `retails`
+moves 5.9 million rows in one sync job; set `ELT_RLVR_SYNC_TIMEOUT_SECONDS=3600` for it.
+
+`scripts/grade_pipeline.py` grades model files written outside a rollout, with the task's reference
+extract-load file, once per held-out seed:
+
+```bash
+uv run python scripts/grade_pipeline.py --elt-bench-root /path/to/ELT-Bench --task retails \
+    --models /path/to/ELT-Bench/example/retails/customers.sql /path/to/ELT-Bench/example/retails/nations.sql \
+    --drop-qualifier retails.airbyte_schema. --seeds 7 11 13
+```
 
 Settings read from the environment:
 
@@ -207,13 +219,14 @@ A batch larger than the task list wraps around, so one task can fill several gro
 ## Results
 
 Every command above was run on one machine (4 CPUs, Airbyte 2.5, a Snowflake trial account, Tinker). The outputs
-are in [logs/](logs/README.md).
+are in [logs/](logs/README.md), which also says which commit each run used.
 
 | Run | Result |
 | --- | --- |
-| `uv run pytest -v` | 496 passed |
+| `uv run pytest -v` | 508 passed |
 | Reference pipeline on a local task (`storefront`) | reward 1.0 |
-| Reference pipeline on the official tasks `human_resources`, `trains`, `app_store`; every sync runs through Airbyte, and `app_store` uses the REST API connector registered with `--single-page` | reward 1.0 each: the loads equal the reference load and the models reproduce the benchmark's ground truth |
+| Reference pipeline on the official tasks `human_resources`, `trains`, `app_store`, `retails`; every sync runs through Airbyte, and `app_store` and `retails` use the REST API connector registered with `--single-page` | reward 1.0 each: the loads equal the reference load and the models reproduce the benchmark's ground truth |
+| The worked example that ELT-Bench ships for `retails`, by the benchmark's authors, graded with `scripts/grade_pipeline.py` under the held-out seeds 7, 11 and 13 | 1.0 under each seed. A copy with one `LEFT JOIN` made an inner join matches the ground truth and earns 0.65 under each seed. |
 | Qwen3.6-35B-A3B sampled through Tinker on `trains`, two rollouts | rewards 0.9 and 1.0. The first matches the ground truth in every column and loses one column on held-out data: for a train without cars it compares a missing count with 4. |
 | Qwen3.6-35B-A3B sampled through Tinker on `human_resources` | reward 0.96: every load right, 15 of 16 columns right. The model rounds a percentage to two decimals, which the benchmark's 1% tolerance accepts and the exact comparison does not. The episode ended at its 30 turns without `submit` and is graded all the same. |
 | One optimization step on `storefront` and `clinic`, four rollouts each | rewards (1.0, 0.94, 0.94, 1.0) and (1.0, 1.0, 0.89, 0.95); both groups enter the step |
@@ -257,24 +270,25 @@ loaded becomes a snapshot; a failed one runs again the next time.
 
 | Mean seconds | `human_resources` (Airbyte, Snowflake) | `storefront` (DuckDB, 25,000 source rows) |
 | --- | --- | --- |
-| `run_extract_load`, synced by the engine | 290 | 0.099 |
-| `run_extract_load`, served by the sync cache | 7.4 | 0.028 |
-| `run_transform` | 3.1 | 0.018 |
-| `query` | 0.2 | 0.001 |
-| Grading, per rollout | 18.8 | 0.38 |
+| `run_extract_load`, synced by the engine | 266 | 0.090 |
+| `run_extract_load`, served by the sync cache | 7.8 | 0.026 |
+| `run_transform` | 2.6 | 0.017 |
+| `query` | 0.1 | 0.001 |
+| Grading, per rollout | 14.9 | 0.34 |
 
 The first row is the round without the cache: one rollout with three connections on the official task, eight
 rollouts on the local one. The other rows are the round with the cache, three and eight rollouts graded as one
 group; on the local task the first of the eight rollouts makes the snapshots, so its three syncs are in the
 mean. A group shares its held-out samples, and drawing them is most of the grading time on Snowflake: one
-official rollout graded alone takes 37 s.
+official rollout graded alone takes 38 s.
 
 ## Adding a reference pipeline for an official task
 
 Put `extract_load.yaml`, `models/<model>.sql` and `task.yaml` (the foreign keys between source tables, which the
 held-out samples respect) into `elt_rlvr/tasks/elt_bench_references/<task>/`. `policy=reference` must then earn
 reward 1.0, which shows that the reference reproduces the benchmark's ground truth. From then on the task is
-graded with the content check of loads and with held-out data.
+graded with the content check of loads and with held-out data. If someone else has solved the task,
+`scripts/grade_pipeline.py` shows whether the two solutions agree on the held-out samples as well.
 
 ## Adding a warehouse
 
@@ -307,7 +321,7 @@ elt_rlvr/
   train.py          training entry point
   rollout.py        single group rollout
   bench.py          latency measurement
-scripts/            Airbyte setup helpers for ELT-Bench, survey of the official tasks, regrade of a logged rollout
+scripts/            Airbyte setup helpers, survey of the official tasks, grading of hand-written or logged pipelines
 tests/
 docs/DESIGN.md
 logs/               outputs of the commands in this file
