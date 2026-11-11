@@ -271,6 +271,9 @@ class AirbyteEngine(ExtractLoadEngine):
     def source_types(self) -> tuple[str, ...]:
         return tuple(SOURCE_RESOURCES)
 
+    def sync_variant(self, connection: ConnectionConfig) -> str:
+        return self._settings.definition_ids.get(connection.source_type, "")
+
     def _scrub(self, text: str, rendered: RenderedConnection) -> str:
         """Remove every sensitive value of ``rendered`` from a message before it is returned to the policy."""
         for value in sorted(rendered.variables.values(), key=len, reverse=True):

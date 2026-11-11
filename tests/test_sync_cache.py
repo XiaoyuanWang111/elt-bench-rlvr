@@ -1,5 +1,9 @@
 """The sync cache serves a repeated connection from a snapshot and reproduces what the wrapped engine would load."""
 
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import pandas as pd
 import pytest
 
@@ -8,22 +12,41 @@ from elt_rlvr.extract_load.cache import CachingEngine
 from elt_rlvr.pipeline import ConnectionConfig, StreamConfig
 
 FIRST, SECOND = "rollout_first", "rollout_second"
+OUTAGE = "sync job ended with status failed"
 
 
 class CountingEngine(ExtractLoadEngine):
     """Loads ``rows`` rows per stream, rejects a configuration with a ``reject`` field, and counts its syncs.
 
-    A stream named ``missing`` fails, as a stream absent from a real source does.
+    A stream named ``missing`` fails, as a stream absent from a real source does. The next ``outages`` syncs fail
+    on every stream, as a sync job does that the deployment could not finish, and ``hold`` keeps a sync from
+    returning until it is set.
     """
 
     def __init__(self) -> None:
         self.calls = 0
+        self.outages = 0
+        self.variant = ""
+        self.entered = threading.Event()
+        self.hold: threading.Event | None = None
 
     def source_types(self) -> tuple[str, ...]:
         return ("counting",)
 
+    def sync_variant(self, connection) -> str:
+        return self.variant
+
     def sync(self, connection, *, warehouse, namespace) -> list[StreamResult]:
         self.calls += 1
+        self.entered.set()
+        if self.hold is not None:
+            assert self.hold.wait(10)
+        if self.outages:
+            self.outages -= 1
+            return [
+                StreamResult(connection.name, stream.name, stream.name, succeeded=False, error=OUTAGE)
+                for stream in connection.streams
+            ]
         if "reject" in connection.configuration:
             raise ConnectionRejectedError(connection.configuration["reject"])
         results = []
@@ -134,7 +157,7 @@ def test_cache_same_configuration_under_another_name_reports_its_own_name(cache,
     assert {result.connection for result in results} == {"store"}
 
 
-def test_cache_rejected_configuration_is_rejected_again_without_syncing(cache, inner, rollouts):
+def test_cache_rejected_configuration_is_not_kept(cache, inner, rollouts):
     connection = _connection(reject="host 'db' is not a source of this task")
 
     with pytest.raises(ConnectionRejectedError, match="host 'db' is not a source of this task"):
@@ -142,20 +165,60 @@ def test_cache_rejected_configuration_is_rejected_again_without_syncing(cache, i
     with pytest.raises(ConnectionRejectedError, match="host 'db' is not a source of this task"):
         cache.sync(connection, warehouse=rollouts, namespace=SECOND)
 
-    assert inner.calls == 1
+    assert inner.calls == 2
     assert rollouts.list_tables(SECOND) == []
 
 
-def test_cache_failed_stream_is_reported_again_without_syncing(cache, inner, rollouts):
+def test_cache_sync_with_a_failed_stream_is_not_kept(cache, inner, rollouts):
     connection = _connection(streams=("orders", "missing"))
 
     first = cache.sync(connection, warehouse=rollouts, namespace=FIRST)
     second = cache.sync(connection, warehouse=rollouts, namespace=SECOND)
 
-    assert inner.calls == 1
+    assert inner.calls == 2
     assert second == first
     assert second[1] == StreamResult("shop", "missing", "missing", succeeded=False, error="no such stream")
     assert rollouts.list_tables(SECOND) == ["orders"]
+
+
+def test_cache_sync_that_failed_once_succeeds_for_the_next_request(cache, inner, rollouts):
+    inner.outages = 1
+
+    failed = cache.sync(_connection(), warehouse=rollouts, namespace=FIRST)
+    loaded = cache.sync(_connection(), warehouse=rollouts, namespace=FIRST)
+    served = cache.sync(_connection(), warehouse=rollouts, namespace=SECOND)
+
+    assert [(result.succeeded, result.error) for result in failed] == [(False, OUTAGE), (False, OUTAGE)]
+    assert [(result.succeeded, result.rows_loaded) for result in loaded] == [(True, 3), (True, 3)]
+    assert served == loaded
+    assert inner.calls == 2
+
+
+def test_cache_requests_waiting_for_a_sync_that_fails_get_its_outcome(cache, inner, rollouts):
+    inner.outages = 1
+    inner.hold = threading.Event()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        running = pool.submit(cache.sync, _connection(), warehouse=rollouts, namespace=FIRST)
+        assert inner.entered.wait(10)
+        waiting = pool.submit(cache.sync, _connection(), warehouse=rollouts, namespace=SECOND)
+        time.sleep(0.5)  # long enough for the second request to arrive and wait for the first
+        inner.hold.set()
+        results = running.result(10), waiting.result(10)
+
+    assert inner.calls == 1
+    assert all(not result.succeeded for result in results[0] + results[1])
+    inner.hold = None
+    assert all(result.succeeded for result in cache.sync(_connection(), warehouse=rollouts, namespace=FIRST))
+    assert inner.calls == 2
+
+
+def test_cache_keeps_apart_what_the_engine_says_differs(cache, inner, rollouts):
+    cache.sync(_connection(), warehouse=rollouts, namespace=FIRST)
+    inner.variant = "another connector definition"
+    cache.sync(_connection(), warehouse=rollouts, namespace=SECOND)
+
+    assert inner.calls == 2
 
 
 @pytest.mark.parametrize("sync_mode", ["incremental_append", "incremental_deduped_history"])

@@ -41,6 +41,14 @@ class ExtractLoadEngine(ABC):
             ConnectionRejectedError: The configuration is invalid; nothing was loaded.
         """
 
+    def sync_variant(self, connection: ConnectionConfig) -> str:
+        """Names whatever decides the result of syncing ``connection`` besides the connection itself.
+
+        The sync cache keeps apart results that differ in it. The Airbyte engine returns the connector definition
+        it is set to use for the source type.
+        """
+        return ""
+
     def close(self) -> None:  # noqa: B027
         """Release what the engine created outside the warehouse."""
 

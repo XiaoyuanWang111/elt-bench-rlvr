@@ -1,12 +1,14 @@
 """A warehouse that keeps its namespaces lets a later process reuse the reference load and the sync snapshots."""
 
+from dataclasses import replace
+
 from support import reference_extract_load
 
 from elt_rlvr.extract_load.base import ExtractLoadEngine
 from elt_rlvr.extract_load.cache import CachingEngine
 from elt_rlvr.extract_load.local import LocalEngine
 from elt_rlvr.grading.reference import TaskReference
-from elt_rlvr.pipeline import parse_extract_load
+from elt_rlvr.pipeline import StreamConfig, parse_extract_load
 from elt_rlvr.warehouse.duckdb import DuckDBWarehouse
 from elt_rlvr.warehouse.state import read_state, write_state
 
@@ -122,6 +124,23 @@ def test_second_process_serves_a_sync_from_the_snapshot_kept_in_the_warehouse(lo
         (result.table, result.rows_loaded) for result in loaded
     ]
     assert warehouse.row_count("rollout_b", "members") == warehouse.row_count("rollout_a", "members")
+
+
+def test_failed_sync_is_not_served_to_a_second_process(local_tasks):
+    task = local_tasks["library"]
+    warehouse = KeptWarehouse()
+    connection = parse_extract_load(reference_extract_load(task))[0]
+    missing = replace(
+        connection, streams=(*connection.streams, StreamConfig("no_such_stream", "full_refresh_overwrite"))
+    )
+    first, second = _engine(task), _engine(task)
+    warehouse.create_namespace("rollout_a")
+
+    failed = CachingEngine(first).sync(missing, warehouse=warehouse, namespace="rollout_a")
+    CachingEngine(second).sync(missing, warehouse=warehouse, namespace="rollout_a")
+
+    assert not all(result.succeeded for result in failed)
+    assert (first.syncs, second.syncs) == (1, 1)
 
 
 def test_kept_snapshot_with_missing_rows_is_synced_again(local_tasks):
