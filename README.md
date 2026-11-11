@@ -238,9 +238,9 @@ group. A group shares its held-out samples, so one official rollout graded alone
 ## Adding a reference pipeline for an official task
 
 Put `extract_load.yaml`, `models/<model>.sql` and `task.yaml` (the foreign keys between source tables, which the
-held-out samples respect) into `elt_rlvr/tasks/elt_bench_references/<task>/`. `policy=reference` must then earn reward 1.0, which shows that the
-reference reproduces the benchmark's ground truth. From then on the task is graded with the content check of
-loads and with held-out data.
+held-out samples respect) into `elt_rlvr/tasks/elt_bench_references/<task>/`. `policy=reference` must then earn
+reward 1.0, which shows that the reference reproduces the benchmark's ground truth. From then on the task is
+graded with the content check of loads and with held-out data.
 
 ## Adding a warehouse
 
