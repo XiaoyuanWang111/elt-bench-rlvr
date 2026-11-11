@@ -42,19 +42,19 @@ the correct function of the source data: right on today's data and still right w
 
 A held-out sample keeps a random 70% of each table's rows, consistent with the foreign keys, takes all child rows
 away from one parent row per key (an inner join then loses a row) and moves the key values of each parent table to
-other rows (a value pasted per key is then wrong). Being stricter than the benchmark, it must not fail sound SQL.
-The worked example ELT-Bench ships for `retails`, written by its authors, earns 1.0 under three seeds against our
-reference, which was written from the column descriptions; a copy with one LEFT JOIN made an inner join matches
-the ground truth and earns 0.65. The check also catches mistakes in sampled rollouts: two that match the ground
-truth in every column, one with an inner join that drops trains without cars, one with NULL replaced by 0 where
-the description does not ask for it, earn 0.3 and 0.91 under every seed tried.
+other rows (a value pasted per key is then wrong). Because it is stricter than the benchmark, it must not fail
+correct SQL. The benchmark authors' worked example for `retails` earns 1.0 under three seeds against this
+repository's reference, written from the column descriptions; with one LEFT JOIN made an inner join, it still
+matches the ground truth but earns 0.65. In sampled rollouts the check caught two mistakes that match the ground
+truth in every column: an inner join that drops trains without cars (0.3 under each seed) and NULL replaced by 0
+where the description does not ask for it (0.91).
 
 `reward = 0.3 * EL + 0.7 * T` weights the transformations, where the benchmark's agents fail most, and keeps a
 correct load above zero. `T` needs no gate on `EL`, as columns are graded on the tables the pipeline loaded.
-Gating as the benchmark's stages do, `EL * (0.3 + 0.7 * T)`, is an option that discards signal: it pays 0 to an
-earlier rollout that loaded its tables twice (`EL` 0) with `T` 0.25, where the sum pays 0.175.
+Gating as the benchmark's stages do, `EL * (0.3 + 0.7 * T)`, is available but discards signal. A logged rollout
+that loaded its tables more than once (`EL` 0) with `T` 0.25 earns 0 under it and 0.175 under the sum.
 
-**Outcome or process reward.** A graded outcome reward. tinker-cookbook centres rewards within a group, so a
+**Outcome or process reward.** A graded outcome reward. tinker-cookbook centers rewards within a group, so a
 group that scores alike teaches nothing, and graded rewards differ where pass-or-fail scores tie: the logged
 optimization steps had groups (1.0, 0.94, 0.94, 1.0) and (1.0, 1.0, 0.89, 0.95) on local tasks and (0.0, 0.9)
 on `trains`, whose group (0.9, 0.9) was dropped. Verifiable milestones (a table loaded, a column right) are
@@ -80,13 +80,13 @@ The policy controls only tool arguments. Each row has a test.
 | --- | --- |
 | Hard-code the output, or paste looked-up values into SQL | Held-out data (tasks with a reference): constants fail, and a value pasted per key is wrong once keys move. |
 | Leave correct tables and submit other files; fabricate a source table; append twice | The grader runs the submitted SQL; a load counts by content digest, if the engine wrote it and the file describes it. |
-| Load the public ground truth; read grader files or other rollouts' tables | Source locations must come from `config.yaml`. File tools stay in the workspace. SQL is parsed, limited to the rollout's tables and re-emitted; `TABLE(...)`, qualified names and catalog functions are refused. |
+| Load the public ground truth; read grader files or other rollouts' tables | Source locations must come from `config.yaml`. File tools stay in the workspace. SQL is parsed, limited to the rollout's tables and re-emitted; qualified names, catalog functions and `TABLE(<name>)` are refused. |
 | Use warehouse credentials, or have Terraform read host files | Secrets reach the model as placeholders; template syntax is escaped in values, refused in keys. |
 | Exploit the 1% tolerance, break the grader, exhaust resources | Exact integers and text; a grader error gives 0, a failed draw gives the group 0; timeouts, a sync budget, no fetch of an oversized table. |
 
 Known limits. Held-out grading and the content check need a reference pipeline, which four official tasks have;
 on the other 96, loads are checked by row count and models against the public ground truth, so constants and a
-wrong load of the right size are paid. A value pasted per row of a table no foreign key refers to survives a
+wrong load of the right size earn reward. A value pasted per row of a table no foreign key refers to survives a
 sample. Isolation rests on the SQL guard, not on a warehouse role per rollout.
 
 ## 5. Efficiency

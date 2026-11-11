@@ -11,7 +11,7 @@ low-resource mode, a Snowflake trial account, Tinker). Two runs:
 
 Later commits change only documentation and these logs. What was changed in the files: the machine's home
 directory, the Snowflake account, and the identifiers of Tinker runs and Snowflake queries are replaced by
-placeholders, and terminal colour codes and the request logging of the Snowflake and HTTP clients are removed.
+placeholders, and terminal color codes and the request logging of the Snowflake and HTTP clients are removed.
 Every command was given a `log_path=` under `runs/` to choose where its transcript is written. The transcripts
 hold rows of the benchmark's public data.
 

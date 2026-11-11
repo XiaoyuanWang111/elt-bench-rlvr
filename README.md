@@ -35,38 +35,39 @@ start from the same state.
 `reward = 0.3 * EL + 0.7 * T`
 
 - `EL`: the share of required source tables whose loaded rows equal the reference load (same columns, same multiset
-  of rows), not only the same row count. The tables are graded as the rollout left them, and a table counts only
-  if the submitted `extract_load.yaml` still describes every stream whose sync wrote the rows it holds now (same
-  connection name, source configuration and sync mode). Columns that a sync adds (`_airbyte_*`, `_ab_*`) are
+  of rows), not only the same row count. The tables are graded as the rollout left them. A table counts only if
+  the submitted `extract_load.yaml` still describes every stream whose sync wrote its present rows, with the same
+  connection name, source configuration and sync mode. Columns that a sync adds (`_airbyte_*`, `_ab_*`) are
   ignored.
 - `T`: the mean over the required tables of the share of required columns that are right. The grader runs the
   submitted model files itself in a fresh namespace, on the tables the pipeline loaded. A column counts only if it
-  matches on the original data and on every held-out sample of the source tables, where the expected output comes
-  from the task's reference models. A table that does not build, or has another number of rows, on the original
-  data or on a sample loses all its columns.
+  matches on the original data and on every held-out sample of the source tables; on a sample, the expected
+  output comes from the task's reference models. A table that does not build, or has another number of rows, on
+  the original data or on a sample loses all its columns.
 
 A held-out sample keeps a random 70% of the rows of each table and drops the rows whose parent row was dropped.
 Two more changes aim at SQL that is right on the original data only (`RewardConfig.heldout_edge_cases` turns
 them off):
 
-- All child rows of one parent row per foreign key are removed. A parent without children tells an outer join
-  from an inner one, and a NULL that was kept from one that was replaced; random sampling produces such a row
+- All child rows of one parent row per foreign key are removed. Such a parent separates an outer join from an
+  inner join, and a kept NULL from a NULL replaced by a value; random sampling leaves a parent without children
   only by chance. A sample in which a key has fewer than two parents with children is drawn again, up to five
   times.
 - The key values of every parent table move to other rows, and the rows that refer to them follow. SQL that maps
   a key to a value looked up with `query` then returns the value of another row.
 
-This is stricter than ELT-Bench on purpose: it grades cases that the benchmark's data does not contain, by the
-reference pipeline's reading of the column descriptions. The prompt and `documentation/pipeline.md` tell the model
-what changed data looks like.
+This is stricter than ELT-Bench on purpose. It grades cases that the benchmark's data does not contain, and on
+those cases the expected values come from the reference models. Where a column description allows two readings,
+the reference's reading decides. The prompt and `documentation/pipeline.md` tell the model what changed data
+looks like.
 
 Held-out grading and the content check of loads need a reference pipeline for the task. The local tasks have one;
 of the official tasks, four have one so far (`elt_rlvr/tasks/elt_bench_references/`): `human_resources`
 (Postgres, S3, flat file), `trains` (REST API, flat file), `app_store` (MongoDB, REST API) and `retails` (all
 five kinds). Their models were written from the column descriptions of `data_model.yaml`. For `retails`
-ELT-Bench ships a worked example by its authors, which is graded against the reference below. An official task
-without one is graded against the benchmark's ground truth and row counts only, so constants, pasted values and
-a wrong load with the right row count are paid there.
+ELT-Bench ships a worked example by its authors; graded against this reference, it earns 1.0 (see Results). An
+official task without a reference is graded against the benchmark's ground truth and row counts only, so
+constants, pasted values and a wrong load with the right row count earn reward there.
 
 Within a table every required column weighs the same, whether the model computes it or copies it from a source
 table, and every table weighs the same.
@@ -173,7 +174,7 @@ Notes from setting ELT-Bench up on a new machine (Ubuntu 24.04, Airbyte 2.5 inst
 2026). ELT-Bench documents Terraform provider 0.6.5 from late 2024, and several of these notes come from running
 it against connectors that are two years newer.
 
-- `localstack/localstack:latest` exits without a licence token, so the S3 sources do not come up. Pinning the image
+- `localstack/localstack:latest` exits without a license token, so the S3 sources do not come up. Pinning the image
   in `elt-docker/docker-compose.yml` to `localstack/localstack:3.8.1` works.
 - `mongo:8.0` refuses to start on Linux kernels 6.19 and newer (its log names SERVER-121912). `mongo:8.2` starts.
 - Airbyte 2.5 asks for four CPUs per sync job. On a machine with four CPUs the job stays pending; install with
@@ -231,7 +232,7 @@ are in [logs/](logs/README.md), which also says which commit each run used.
 | Qwen3.6-35B-A3B sampled through Tinker on `human_resources` | reward 0.96: every load right, 15 of 16 columns right. The model rounds a percentage to two decimals, which the benchmark's 1% tolerance accepts and the exact comparison does not. The episode ended at its 30 turns without `submit` and is graded all the same. |
 | One optimization step on `storefront` and `clinic`, four rollouts each | rewards (1.0, 0.94, 0.94, 1.0) and (1.0, 1.0, 0.89, 0.95); both groups enter the step |
 | One optimization step on the official task `trains`, two groups of two rollouts | rewards (0.9, 0.9) and (0.0, 0.9). tinker-cookbook drops the first group, whose rollouts earned the same, and takes the step on the second. The rollout with 0 stopped calling tools after it wrote its extract-load file. |
-| Three rollouts sampled at an earlier commit, graded again with `scripts/regrade_transcript.py` under the held-out seeds 7, 11 and 13 | 0.3 (`trains`: an inner join drops a train without cars), 0.91 (`human_resources`: NULL replaced by 0 in two columns) and 1.0 (`trains`: correct SQL) under each seed. The first two match the benchmark's ground truth in every column, and earned 1.0 under some seeds while a sample was random rows only. |
+| Three rollouts sampled at an earlier commit, graded again with `scripts/regrade_transcript.py` under the held-out seeds 7, 11 and 13 | 0.3 (`trains`: an inner join drops a train without cars), 0.91 (`human_resources`: NULL replaced by 0 in two columns) and 1.0 (`trains`: correct SQL) under each seed. The first two match the benchmark's ground truth in every column. At the earlier commit, when a sample only dropped random rows, they earned 1.0 under some seeds. |
 
 ## Reward-hacking tests
 
@@ -248,7 +249,7 @@ the pipeline.
 | Point a source at a ground-truth file, a URL or another host | A host, URL, bucket, connection string or database in a configuration must be part of a value in the task's `config.yaml`. |
 | Read the reference pipeline or grader files | File tools are confined to the workspace; the reference lives outside it. |
 | Write outside `pipeline/` | Only the two kinds of pipeline file are writable. |
-| Read another rollout's or the grader's tables, or the account's query history | SQL is parsed, limited to the rollout's tables (a CTE name counts only inside its scope) and re-emitted with qualified names. `TABLE(...)` and `LATERAL` accept only table functions that read no relation, and a function cannot be called through a schema. All SQL runs on one warehouse connection: the guard is the wall, not a role per rollout. |
+| Read another rollout's or the grader's tables, or the account's query history | SQL is parsed, limited to the rollout's tables (a CTE name counts only inside its scope) and re-emitted with qualified names. `TABLE(...)` and `LATERAL` accept only table functions that read no table, and a function cannot be called through a schema. All SQL runs on one warehouse connection, so the guard is what keeps rollouts apart; there is no warehouse role per rollout. |
 | `read_csv`, `COPY`, `ATTACH`, DDL, DML, several statements | Rejected by the SQL guard; DuckDB also runs with external access off and a locked configuration. |
 | Rely on the benchmark's 1% numeric tolerance | Integers and text must be equal; other numbers may differ by a relative 1e-6. |
 | Terraform template in a connector field, to read a file or a variable of the host | Escaped in values and refused in keys before rendering. |
