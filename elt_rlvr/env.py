@@ -145,6 +145,9 @@ class ELTEnvGroupBuilder(EnvGroupBuilder):
 
     async def make_envs(self) -> Sequence[Env]:
         runtime = task_runtime(self.task, self.backend)
+        # Built before any rollout runs: a deployment that cannot load the reference fails here, not after the
+        # policy has spent its turns.
+        await asyncio.to_thread(runtime.reference.build)
         tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
         renderer_name = self.renderer_name or model_info.get_recommended_renderer_name(self.model_name)
         renderer = get_renderer(renderer_name, tokenizer)
