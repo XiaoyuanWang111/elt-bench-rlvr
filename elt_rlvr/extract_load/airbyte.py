@@ -116,10 +116,17 @@ def _leaves(value: Any) -> list[str]:
 
 
 def _escape_interpolation(value: Any) -> Any:
-    """Escape Terraform template sequences so that a configuration string is always taken literally."""
+    """Escape Terraform template sequences so that a configuration string is always taken literally.
+
+    Terraform evaluates templates in the keys of an object too. No connector field has a template sequence in
+    its name, so such a key is rejected.
+    """
     if isinstance(value, str):
         return value.replace("${", "$${").replace("%{", "%%{")
     if isinstance(value, Mapping):
+        for key in value:
+            if "${" in str(key) or "%{" in str(key):
+                raise ConnectionRejectedError(f"{str(key)[:80]!r} is not a field of a connector configuration")
         return {key: _escape_interpolation(child) for key, child in value.items()}
     if isinstance(value, list):
         return [_escape_interpolation(child) for child in value]

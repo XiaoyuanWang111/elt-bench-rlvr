@@ -269,6 +269,23 @@ def test_terraform_template_in_a_configuration_string_is_rendered_literally(engi
     assert source["configuration"]["jdbc_url_params"] == '$${file("/etc/passwd")}%%{if true}x%%{endif}'
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {'${file("/etc/passwd")}': 1},
+        {"ssl_mode": {"%{if true}x%{endif}": {}}},
+        {"schemas": [{"${path.cwd}": "public"}]},
+    ],
+    ids=["top_level", "nested", "inside_a_list"],
+)
+@pytest.mark.parametrize("source_type", ["postgres", "custom_api"])
+def test_terraform_template_in_a_configuration_key_is_rejected(source_type, extra, engine):
+    configuration = {**POSTGRES_CONFIGURATION, **extra}
+
+    with pytest.raises(ConnectionRejectedError, match="is not a field of a connector configuration"):
+        engine.render_resources(_connection(source_type, configuration), "rollout_abc")
+
+
 def test_error_text_returned_to_the_policy_has_secrets_removed(engine):
     stderr = f"Error: authentication failed for postgres with password {POSTGRES_PASSWORD} and {WAREHOUSE_PASSWORD}\n"
     result = subprocess.CompletedProcess(args=["terraform"], returncode=1, stdout="", stderr=stderr)
