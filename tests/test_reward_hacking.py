@@ -272,7 +272,7 @@ def test_database_sources_cannot_leave_the_source_directory(
 
     report = session.run_extract_load()
 
-    assert report["connections"][0]["status"] == "failed"
+    assert "is not a source of this task" in report["connections"][0]["error"]
     assert session.raw_tables == set()
 
 
