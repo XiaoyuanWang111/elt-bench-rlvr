@@ -179,6 +179,32 @@ async def test_dataset_builder_cycles_tasks_into_batches(local_tasks):
     assert all(group.group_size == 1 for group in evaluation.get_batch(0))
 
 
+async def test_dataset_length_covers_every_task(local_tasks):
+    builder = ELTDatasetBuilder(tasks=list(local_tasks.values()), model_name=MODEL_NAME, batch_size=2, group_size=1)
+
+    train, _ = await builder()
+
+    assert len(train) == 2
+    assert [group.task.task_id for group in train.get_batch(1)] == ["clinic", "library"]
+
+
+async def test_task_that_fills_two_slots_of_a_batch_runs_as_two_independent_groups(local_tasks):
+    builder = ELTDatasetBuilder(tasks=[local_tasks["library"]], model_name=MODEL_NAME, batch_size=2, group_size=1)
+    train, _ = await builder()
+    first, second = train.get_batch(0)
+    await first.make_envs()
+    await second.make_envs()
+    (session,) = second._sessions.values()
+
+    # tinker-cookbook runs the groups of a batch at the same time and cleans each one up when it ends.
+    await first.cleanup()
+
+    assert session.workspace.is_dir()
+    assert session.warehouse.list_tables(session.namespace) == []
+    await second.cleanup()
+    assert not session.workspace.exists()
+
+
 async def test_reference_rollout_command_writes_rewards_and_a_transcript(tmp_path):
     log_path = tmp_path / "rollout.jsonl"
     config = rollout.CLIConfig(task="storefront", policy="reference", model_name=MODEL_NAME, log_path=str(log_path))

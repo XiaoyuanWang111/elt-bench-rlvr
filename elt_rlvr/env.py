@@ -7,6 +7,7 @@ end. Grading reads only the state each rollout left behind, so it does not depen
 
 import asyncio
 import logging
+import math
 import shutil
 import tempfile
 import threading
@@ -127,6 +128,18 @@ class ELTEnvGroupBuilder(EnvGroupBuilder):
         state["_sessions"] = {}
         return state
 
+    def fresh(self) -> "ELTEnvGroupBuilder":
+        """A builder for the same task and settings that keeps track of its own rollouts."""
+        return ELTEnvGroupBuilder(
+            self.task,
+            model_name=self.model_name,
+            renderer_name=self.renderer_name,
+            group_size=self.group_size,
+            backend=self.backend,
+            reward=self.reward,
+            episode=self.episode,
+        )
+
     async def make_envs(self) -> Sequence[Env]:
         runtime = task_runtime(self.task, self.backend)
         tokenizer = tokenizer_utils.get_tokenizer(self.model_name)
@@ -211,11 +224,17 @@ class ELTDataset(RLDataset):
         self.batch_size = batch_size
 
     def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
+        """The builders of one batch, wrapping around the task list.
+
+        Every slot gets a builder of its own. The groups of a batch run at the same time and a builder's
+        ``cleanup`` closes every rollout it made, so a task that fills two slots must not share one builder.
+        """
         start = index * self.batch_size
-        return [self.builders[position % len(self.builders)] for position in range(start, start + self.batch_size)]
+        positions = range(start, start + self.batch_size)
+        return [self.builders[position % len(self.builders)].fresh() for position in positions]
 
     def __len__(self) -> int:
-        return max(1, len(self.builders) // self.batch_size)
+        return math.ceil(len(self.builders) / self.batch_size)
 
 
 @chz.chz
