@@ -94,17 +94,19 @@ def test_model_files_are_graded_not_the_tables_left_in_the_warehouse(local_tasks
     assert result.transform_score == pytest.approx(2 / 5)
 
 
-def test_failed_held_out_draw_fails_every_rollout_that_needs_the_samples(local_tasks, warehouse, workspace, monkeypatch):
+def test_failed_held_out_draw_fails_the_whole_group(local_tasks, warehouse, workspace, monkeypatch):
     task = local_tasks["library"]
     sessions = []
-    for name in ("first", "second"):
+    for name in ("constants", "more_constants", "loads_only"):
         session = open_session(task, warehouse, workspace / name)
         solve(session)
         write_pipeline(session, None, {"member_activity": _literal_model(session, "member_activity")})
         sessions.append(session)
+    # The third rollout has no column right on the original data, so it never asks for the samples.
+    sessions[2].write_file("pipeline/models/member_activity.sql", "")
     reference = TaskReference(task, warehouse, sessions[0].engine)
 
-    def failing_draw(seed, sample_percent):
+    def failing_draw(seed, sample_percent, **options):
         raise WarehouseError("the warehouse did not answer")
 
     monkeypatch.setattr(reference, "draw_heldout", failing_draw)
@@ -112,7 +114,8 @@ def test_failed_held_out_draw_fails_every_rollout_that_needs_the_samples(local_t
     # One thread, so that the second rollout asks for the samples after the draw has failed for the first.
     grades = grade_group(sessions, reference, RewardConfig(grading_threads=1), seed=7)
 
-    assert [grade.reward for grade in grades] == [0.0, 0.0]
+    # No rollout may earn more than another because it did not need what the environment failed to provide.
+    assert [grade.reward for grade in grades] == [0.0, 0.0, 0.0]
     assert all("held-out samples could not be drawn" in grade.grader_error for grade in grades)
 
 

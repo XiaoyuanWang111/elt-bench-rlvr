@@ -93,7 +93,8 @@ class _HeldOutSamples:
     """The held-out samples of one group, drawn when the first rollout needs them.
 
     A group in which no rollout gets a column right on the original data never pays for the samples. If a draw
-    fails, every rollout that needs the samples fails with it: none is graded on fewer samples than the others.
+    fails, ``error`` is set and the whole group is graded as failed: a rollout that needed the samples must not
+    earn less than one that did not.
     """
 
     def __init__(self, reference: TaskReference, config: RewardConfig, seed: int | None) -> None:
@@ -103,7 +104,7 @@ class _HeldOutSamples:
         self._lock = threading.Lock()
         self._samples: list[HeldOut] = []
         self._drawn = False
-        self._error: Exception | None = None
+        self.error: Exception | None = None
 
     def get(self) -> list[HeldOut]:
         with self._lock:
@@ -114,9 +115,9 @@ class _HeldOutSamples:
                         seed = self._rng.randrange(2**31)
                         self._samples.append(self._reference.draw_heldout(seed, self._config.heldout_sample_percent))
                 except Exception as error:
-                    self._error = error
-            if self._error is not None:
-                raise RuntimeError(f"the held-out samples could not be drawn: {self._error}") from self._error
+                    self.error = error
+            if self.error is not None:
+                raise RuntimeError(f"the held-out samples could not be drawn: {self.error}") from self.error
             return self._samples
 
     def drop(self) -> None:
@@ -279,6 +280,10 @@ def grade_group(
     heldouts = _HeldOutSamples(reference, config, seed)
     try:
         with ThreadPoolExecutor(max_workers=min(config.grading_threads, max(len(sessions), 1))) as pool:
-            return list(pool.map(lambda session: _grade_or_zero(session, reference, heldouts, config), sessions))
+            grades = list(pool.map(lambda session: _grade_or_zero(session, reference, heldouts, config), sessions))
+        if heldouts.error is not None:
+            error = f"the held-out samples could not be drawn: {heldouts.error}"
+            return [Grade(0.0, 0.0, 0.0, grader_error=error) for _ in sessions]
+        return grades
     finally:
         heldouts.drop()
