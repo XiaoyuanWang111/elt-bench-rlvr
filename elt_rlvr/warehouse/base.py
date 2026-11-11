@@ -16,6 +16,8 @@ from dataclasses import dataclass
 import pandas as pd
 
 IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+KEY_MAP_TABLE, KEY_MAP_OLD, KEY_MAP_NEW = "_elt_rlvr_key_map", "_elt_rlvr_old_key", "_elt_rlvr_new_key"
+"""Scratch table of ``rotate_keys`` and its two columns, named so that no source column has the same name."""
 
 
 class WarehouseError(RuntimeError):
@@ -133,6 +135,17 @@ class Warehouse(ABC):
         The parent is chosen among the ``parent_column`` values of ``namespace.parent_table`` that some row of
         ``table`` refers to through ``column``. With fewer than two such values nothing is deleted, so the table
         is never emptied.
+        """
+
+    @abstractmethod
+    def rotate_keys(
+        self, namespace: str, table: str, column: str, *, references: Sequence[tuple[str, str]], seed: int
+    ) -> None:
+        """Move every value of ``namespace.table.column`` to another row, in an order chosen by ``seed``.
+
+        Each distinct value is replaced by the next one in that order and the last by the first. The same
+        replacement is made in every ``(table, column)`` of ``references``, so rows that referred to a row still
+        refer to it. Afterwards a key value stands for a different row than before.
         """
 
     @abstractmethod

@@ -229,15 +229,39 @@ class TaskReference:
             raise ReferencePipelineError(f"{self.task.task_id}: foreign key names a missing column {table}.{column}")
         return columns[column.lower()].name
 
-    def draw_heldout(self, seed: int, sample_percent: float) -> HeldOut:
+    def _rotate_parent_keys(self, namespace: str, seed: int) -> None:
+        """Give every key value that a foreign key refers to to another row of its table."""
+        references: dict[tuple[str, str], list[tuple[str, str]]] = {}
+        for key in self.task.foreign_keys:
+            if key.table.lower() == key.parent_table.lower():
+                continue
+            parent = (
+                self._tables[key.parent_table.lower()].name,
+                self._column_name(key.parent_table, key.parent_column),
+            )
+            child = (self._tables[key.table.lower()].name, self._column_name(key.table, key.column))
+            references.setdefault(parent, []).append(child)
+        for (table, column), children in references.items():
+            self.warehouse.rotate_keys(namespace, table, column, references=children, seed=seed)
+
+    def draw_heldout(self, seed: int, sample_percent: float, *, edge_cases: bool = True) -> HeldOut:
         """Sample the reference raw tables and run the reference models on the sample.
 
         Each table keeps a random share of its rows. A row that refers to a dropped parent row is dropped too, so
-        the sample satisfies every foreign key the original data satisfies. For every foreign key, one parent row
-        then loses all the rows that refer to it. A parent without children is the case that tells an outer join
-        from an inner one, and a NULL that was kept from one that was replaced; a random sample holds it only by
-        chance, and the same submission would then earn different rewards in different groups. A draw on which
-        some expected table is empty would let an empty model pass, so it is redrawn.
+        the sample satisfies every foreign key the original data satisfies.
+
+        With ``edge_cases`` the sample is changed in two more ways, each aimed at SQL that is right on the original
+        data only:
+
+        - For every foreign key, one parent row loses all the rows that refer to it. A parent without children
+          tells an outer join from an inner one, and a NULL that was kept from one that was replaced. A random
+          sample holds such a row only by chance, and the same submission would then earn different rewards in
+          different groups. A sample in which some key has fewer than two parents with children cannot be changed
+          this way and is redrawn; the last draw is used as it is.
+        - The key values of every parent table move to other rows, and the rows that refer to them follow. SQL
+          that maps a key to a value looked up beforehand then returns the value of another row.
+
+        A draw on which some expected table is empty would let an empty model pass, so it is redrawn too.
         """
         if not self.has_pipeline:
             raise ReferencePipelineError(f"task {self.task.task_id} has no reference pipeline for held-out grading")
@@ -246,6 +270,7 @@ class TaskReference:
         try:
             for attempt in range(MAX_HELDOUT_DRAWS):
                 self.warehouse.create_namespace(namespace)
+                every_key_has_a_childless_parent = True
                 for table in self._parents_first():
                     stored = self._tables[table].name
                     self.warehouse.copy_table(
@@ -262,9 +287,17 @@ class TaskReference:
                         self.warehouse.delete_orphans(
                             namespace, stored, column, original_namespace=self.namespace, **relation
                         )
-                        self.warehouse.delete_children_of_one_parent(
-                            namespace, stored, column, seed=seed + attempt, **relation
-                        )
+                        if edge_cases:
+                            before = self.warehouse.row_count(namespace, stored)
+                            self.warehouse.delete_children_of_one_parent(
+                                namespace, stored, column, seed=seed + attempt, **relation
+                            )
+                            if self.warehouse.row_count(namespace, stored) == before:
+                                every_key_has_a_childless_parent = False
+                if not every_key_has_a_childless_parent and attempt < MAX_HELDOUT_DRAWS - 1:
+                    continue
+                if edge_cases:
+                    self._rotate_parent_keys(namespace, seed + attempt)
                 expected = self._run_reference_models(namespace, namespace)
                 if all(len(frame) > 0 for frame in expected.values()):
                     return HeldOut(namespace=namespace, expected=expected)

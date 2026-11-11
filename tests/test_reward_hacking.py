@@ -119,6 +119,29 @@ def test_failed_held_out_draw_fails_the_whole_group(local_tasks, warehouse, work
     assert all("held-out samples could not be drawn" in grade.grader_error for grade in grades)
 
 
+def test_value_of_one_row_pasted_per_key_loses_its_column(local_tasks, warehouse, workspace):
+    task = local_tasks["clinic"]
+    session = open_session(task, warehouse, workspace)
+    solve(session)
+    names = session.query("select doctor_id, full_name from doctors_summary")
+    assert not names["truncated"]
+    cases = " ".join(f"when {doctor_id} then '{full_name}'" for doctor_id, full_name in names["rows"])
+    models = reference_models(task)
+    expression = "d.first_name || ' ' || d.last_name"
+    assert expression in models["doctors_summary"]
+    models["doctors_summary"] = models["doctors_summary"].replace(expression, f"case d.doctor_id {cases} end")
+    write_pipeline(session, None, models)
+
+    result = grade(session)
+
+    # A sample that only drops rows leaves every pasted name right. A held-out sample also gives each doctor_id
+    # to another doctor, so the name looked up for an id is the name of someone else.
+    assert result.transform_score_original == 1.0
+    assert result.model_columns["doctors_summary"]["full_name"] is False
+    assert result.model_columns["doctors_summary"]["num_visits"] is True
+    assert grade(session, RewardConfig(heldout_edge_cases=False)).model_columns["doctors_summary"]["full_name"] is True
+
+
 def _reference_of(task, warehouse, workspace) -> TaskReference:
     reference = TaskReference(task, warehouse, open_session(task, warehouse, workspace).engine)
     reference.build()
@@ -127,6 +150,48 @@ def _reference_of(task, warehouse, workspace) -> TaskReference:
 
 def _rows(warehouse, sql: str) -> list:
     return warehouse.run_query(sql, max_rows=10_000, timeout_seconds=10).rows
+
+
+def test_held_out_sample_gives_every_parent_key_to_another_row(local_tasks, warehouse, workspace):
+    reference = _reference_of(local_tasks["library"], warehouse, workspace)
+
+    heldout = reference.draw_heldout(3, sample_percent=100.0)
+
+    same_member = (
+        f"select count(*) from {heldout.namespace}.members h join {reference.namespace}.members r "
+        "on r.member_id = h.member_id and r.name = h.name"
+    )
+    assert _rows(warehouse, same_member) == [(0,)]
+    loans_by_name = (
+        "select m.name, count(l.loan_id) from {0}.members m left join {0}.loans l on l.member_id = m.member_id "
+        "group by m.name"
+    )
+    original = dict(_rows(warehouse, loans_by_name.format(reference.namespace)))
+    sampled = dict(_rows(warehouse, loans_by_name.format(heldout.namespace)))
+    # The loans followed their member to the new key; only the member chosen to lose its loans differs.
+    changed = [name for name in original if original[name] != sampled[name]]
+    assert len(changed) == 1 and sampled[changed[0]] == 0
+
+
+def test_sample_that_cannot_leave_a_parent_childless_is_drawn_again(local_tasks, warehouse, workspace, monkeypatch):
+    reference = _reference_of(local_tasks["library"], warehouse, workspace)
+    delete = warehouse.delete_children_of_one_parent
+    calls = []
+
+    def nothing_the_first_time(*arguments, **options):
+        calls.append(arguments)
+        if len(calls) > 1:
+            delete(*arguments, **options)
+
+    monkeypatch.setattr(warehouse, "delete_children_of_one_parent", nothing_the_first_time)
+
+    heldout = reference.draw_heldout(3, sample_percent=100.0)
+
+    borrowers = "select count(distinct member_id) from {}.loans"
+    assert len(calls) == 2
+    assert _rows(warehouse, borrowers.format(heldout.namespace))[0][0] == (
+        _rows(warehouse, borrowers.format(reference.namespace))[0][0] - 1
+    )
 
 
 def test_two_references_of_one_task_draw_their_samples_into_different_namespaces(local_tasks, warehouse, workspace):

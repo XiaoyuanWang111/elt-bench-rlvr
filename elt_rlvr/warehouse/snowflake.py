@@ -17,7 +17,17 @@ from snowflake.connector.errors import Error as SnowflakeError
 from snowflake.connector.pandas_tools import write_pandas
 
 from elt_rlvr.settings import destination_database
-from elt_rlvr.warehouse.base import Column, QueryResult, TableFingerprint, Warehouse, WarehouseError, require_identifier
+from elt_rlvr.warehouse.base import (
+    KEY_MAP_NEW,
+    KEY_MAP_OLD,
+    KEY_MAP_TABLE,
+    Column,
+    QueryResult,
+    TableFingerprint,
+    Warehouse,
+    WarehouseError,
+    require_identifier,
+)
 
 # Type codes of the Snowflake connector's cursor description: 0 is FIXED (integers and decimals), 1 is REAL.
 NUMERIC_TYPE_CODES = (0, 1)
@@ -186,6 +196,24 @@ class SnowflakeWarehouse(Warehouse):
             f"WHERE {key} IN (SELECT {parent_key} FROM {parent} WHERE {parent_key} IS NOT NULL))"
             ") WHERE choice = 1 AND parents > 1)"
         )
+
+    def rotate_keys(
+        self, namespace: str, table: str, column: str, *, references: Sequence[tuple[str, str]], seed: int
+    ) -> None:
+        mapping = self._table(namespace, KEY_MAP_TABLE)
+        order = f"ORDER BY HASH(old_key, {int(seed)}), old_key"
+        self._run(
+            f"CREATE OR REPLACE TABLE {mapping} AS SELECT old_key AS {KEY_MAP_OLD}, "
+            f"COALESCE(LEAD(old_key) OVER ({order}), FIRST_VALUE(old_key) OVER ({order})) AS {KEY_MAP_NEW} "
+            f"FROM (SELECT DISTINCT {_quote(column)} AS old_key FROM {self._table(namespace, table)} "
+            f"WHERE {_quote(column)} IS NOT NULL)"
+        )
+        for target, key in [*references, (table, column)]:
+            self._run(
+                f"UPDATE {self._table(namespace, target)} SET {_quote(key)} = m.{KEY_MAP_NEW} "
+                f"FROM {mapping} AS m WHERE {_quote(key)} = m.{KEY_MAP_OLD}"
+            )
+        self._run(f"DROP TABLE {mapping}")
 
     def fingerprint(
         self, namespace: str, table: str, columns: Sequence[str], numeric_columns: Collection[str]

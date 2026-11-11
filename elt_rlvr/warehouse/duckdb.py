@@ -6,7 +6,17 @@ from collections.abc import Collection, Sequence
 import duckdb
 import pandas as pd
 
-from elt_rlvr.warehouse.base import Column, QueryResult, TableFingerprint, Warehouse, WarehouseError, require_identifier
+from elt_rlvr.warehouse.base import (
+    KEY_MAP_NEW,
+    KEY_MAP_OLD,
+    KEY_MAP_TABLE,
+    Column,
+    QueryResult,
+    TableFingerprint,
+    Warehouse,
+    WarehouseError,
+    require_identifier,
+)
 
 NUMERIC_TYPE_PREFIXES = (
     "TINYINT",
@@ -171,6 +181,25 @@ class DuckDBWarehouse(Warehouse):
             f"WHERE {key} IN (SELECT {parent_key} FROM {parent} WHERE {parent_key} IS NOT NULL))"
             ") WHERE choice = 1 AND parents > 1)"
         )
+
+    def rotate_keys(
+        self, namespace: str, table: str, column: str, *, references: Sequence[tuple[str, str]], seed: int
+    ) -> None:
+        schema = _quote(require_identifier(namespace))
+        mapping = f"{schema}.{_quote(KEY_MAP_TABLE)}"
+        order = f"ORDER BY hash(old_key, {int(seed)}), old_key"
+        self._execute(
+            f"CREATE OR REPLACE TABLE {mapping} AS SELECT old_key AS {KEY_MAP_OLD}, "
+            f"coalesce(lead(old_key) OVER ({order}), first_value(old_key) OVER ({order})) AS {KEY_MAP_NEW} "
+            f"FROM (SELECT DISTINCT {_quote(column)} AS old_key FROM {schema}.{_quote(require_identifier(table))} "
+            f"WHERE {_quote(column)} IS NOT NULL)"
+        )
+        for target, key in [*references, (table, column)]:
+            self._execute(
+                f"UPDATE {schema}.{_quote(require_identifier(target))} SET {_quote(key)} = m.{KEY_MAP_NEW} "
+                f"FROM {mapping} AS m WHERE {_quote(key)} = m.{KEY_MAP_OLD}"
+            )
+        self._execute(f"DROP TABLE {mapping}")
 
     def fingerprint(
         self, namespace: str, table: str, columns: Sequence[str], numeric_columns: Collection[str]

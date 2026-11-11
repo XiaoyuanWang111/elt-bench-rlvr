@@ -6,7 +6,7 @@ only if the submitted extract-load file still declares the stream as it was load
 Transform score: the grader re-runs the submitted model files itself, in a fresh namespace, and compares each
 required table with the expected one column by column. It does this on the original data and on held-out samples
 of the raw tables, where the expected output comes from the reference models. A column counts only if it matches
-every time, so SQL that returns hard-coded answers, or that is right on this data by accident, scores nothing.
+every time. A table that does not build on a sample, or has another number of rows there, loses all its columns.
 
 Any failure inside the grader gives reward 0 for that rollout.
 """
@@ -44,6 +44,9 @@ class RewardConfig:
     heldout_samples: int = 2
     """Held-out samples per group of rollouts; 0 grades on the original data only."""
     heldout_sample_percent: float = 70.0
+    heldout_edge_cases: bool = True
+    """Whether a held-out sample, besides dropping rows, leaves one parent row per foreign key without child rows
+    and moves the key values of parent tables to other rows. See ``TaskReference.draw_heldout``."""
     turn_cost: float = 0.0
     """Subtracted from the reward for every assistant turn."""
     grading_threads: int = 8
@@ -113,7 +116,11 @@ class _HeldOutSamples:
                 try:
                     for _ in range(self._config.heldout_samples if self._reference.has_pipeline else 0):
                         seed = self._rng.randrange(2**31)
-                        self._samples.append(self._reference.draw_heldout(seed, self._config.heldout_sample_percent))
+                        self._samples.append(
+                            self._reference.draw_heldout(
+                                seed, self._config.heldout_sample_percent, edge_cases=self._config.heldout_edge_cases
+                            )
+                        )
                 except Exception as error:
                     self.error = error
             if self.error is not None:
