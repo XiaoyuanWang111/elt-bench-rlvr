@@ -15,7 +15,7 @@ from support import (
 )
 
 from elt_rlvr.grading.compare import OFFICIAL, STRICT, compare_tables
-from elt_rlvr.grading.grader import RewardConfig
+from elt_rlvr.grading.grader import RewardConfig, grade_group
 from elt_rlvr.grading.reference import TaskReference
 from elt_rlvr.pipeline import EXTRACT_LOAD_PATH
 from elt_rlvr.session import SessionLimits
@@ -92,6 +92,28 @@ def test_model_files_are_graded_not_the_tables_left_in_the_warehouse(local_tasks
 
     assert "member_activity" in session.model_tables
     assert result.transform_score == pytest.approx(2 / 5)
+
+
+def test_failed_held_out_draw_fails_every_rollout_that_needs_the_samples(local_tasks, warehouse, workspace, monkeypatch):
+    task = local_tasks["library"]
+    sessions = []
+    for name in ("first", "second"):
+        session = open_session(task, warehouse, workspace / name)
+        solve(session)
+        write_pipeline(session, None, {"member_activity": _literal_model(session, "member_activity")})
+        sessions.append(session)
+    reference = TaskReference(task, warehouse, sessions[0].engine)
+
+    def failing_draw(seed, sample_percent):
+        raise WarehouseError("the warehouse did not answer")
+
+    monkeypatch.setattr(reference, "draw_heldout", failing_draw)
+
+    # One thread, so that the second rollout asks for the samples after the draw has failed for the first.
+    grades = grade_group(sessions, reference, RewardConfig(grading_threads=1), seed=7)
+
+    assert [grade.reward for grade in grades] == [0.0, 0.0]
+    assert all("held-out samples could not be drawn" in grade.grader_error for grade in grades)
 
 
 # ---- raw tables that did not come from the sources -----------------------------------------------------------------

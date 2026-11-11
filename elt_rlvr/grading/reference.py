@@ -241,28 +241,32 @@ class TaskReference:
         with self._lock:
             self._heldout_count += 1
             namespace = f"{self.namespace}_heldout_{self._heldout_count}"
-        for attempt in range(MAX_HELDOUT_DRAWS):
-            self.warehouse.create_namespace(namespace)
-            for table in self._parents_first():
-                stored = self._tables[table].name
-                self.warehouse.copy_table(
-                    self.namespace, stored, namespace, sample_percent=sample_percent, seed=seed + attempt
-                )
-                for key in self.task.foreign_keys:
-                    if key.table.lower() != table or key.parent_table.lower() == table:
-                        continue
-                    self.warehouse.delete_orphans(
-                        namespace,
-                        stored,
-                        self._column_name(key.table, key.column),
-                        parent_table=self._tables[key.parent_table.lower()].name,
-                        parent_column=self._column_name(key.parent_table, key.parent_column),
-                        original_namespace=self.namespace,
+        try:
+            for attempt in range(MAX_HELDOUT_DRAWS):
+                self.warehouse.create_namespace(namespace)
+                for table in self._parents_first():
+                    stored = self._tables[table].name
+                    self.warehouse.copy_table(
+                        self.namespace, stored, namespace, sample_percent=sample_percent, seed=seed + attempt
                     )
-            expected = self._run_reference_models(namespace, namespace)
-            if all(len(frame) > 0 for frame in expected.values()):
-                return HeldOut(namespace=namespace, expected=expected)
-        raise ReferencePipelineError(f"could not draw a non-empty held-out sample for {self.task.task_id}")
+                    for key in self.task.foreign_keys:
+                        if key.table.lower() != table or key.parent_table.lower() == table:
+                            continue
+                        self.warehouse.delete_orphans(
+                            namespace,
+                            stored,
+                            self._column_name(key.table, key.column),
+                            parent_table=self._tables[key.parent_table.lower()].name,
+                            parent_column=self._column_name(key.parent_table, key.parent_column),
+                            original_namespace=self.namespace,
+                        )
+                expected = self._run_reference_models(namespace, namespace)
+                if all(len(frame) > 0 for frame in expected.values()):
+                    return HeldOut(namespace=namespace, expected=expected)
+            raise ReferencePipelineError(f"could not draw a non-empty held-out sample for {self.task.task_id}")
+        except Exception:
+            self.warehouse.drop_namespace(namespace)
+            raise
 
     def drop_heldout(self, heldout: HeldOut) -> None:
         self.warehouse.drop_namespace(heldout.namespace)

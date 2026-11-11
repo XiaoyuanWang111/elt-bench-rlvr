@@ -91,7 +91,8 @@ def combine(extract_load_score: float, transform_score: float, config: RewardCon
 class _HeldOutSamples:
     """The held-out samples of one group, drawn when the first rollout needs them.
 
-    A group in which no rollout gets a column right on the original data never pays for the samples.
+    A group in which no rollout gets a column right on the original data never pays for the samples. If a draw
+    fails, every rollout that needs the samples fails with it: none is graded on fewer samples than the others.
     """
 
     def __init__(self, reference: TaskReference, config: RewardConfig, seed: int | None) -> None:
@@ -99,20 +100,26 @@ class _HeldOutSamples:
         self._config = config
         self._rng = random.Random(seed)
         self._lock = threading.Lock()
-        self._samples: list[HeldOut] | None = None
+        self._samples: list[HeldOut] = []
+        self._drawn = False
+        self._error: Exception | None = None
 
     def get(self) -> list[HeldOut]:
         with self._lock:
-            if self._samples is None:
-                self._samples = []
-                if self._reference.has_pipeline:
-                    for _ in range(self._config.heldout_samples):
+            if not self._drawn:
+                self._drawn = True
+                try:
+                    for _ in range(self._config.heldout_samples if self._reference.has_pipeline else 0):
                         seed = self._rng.randrange(2**31)
                         self._samples.append(self._reference.draw_heldout(seed, self._config.heldout_sample_percent))
+                except Exception as error:
+                    self._error = error
+            if self._error is not None:
+                raise RuntimeError(f"the held-out samples could not be drawn: {self._error}") from self._error
             return self._samples
 
     def drop(self) -> None:
-        for sample in self._samples or []:
+        for sample in self._samples:
             self._reference.drop_heldout(sample)
 
 
