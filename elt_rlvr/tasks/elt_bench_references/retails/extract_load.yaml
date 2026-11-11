@@ -1,0 +1,81 @@
+connections:
+  - name: orders_database
+    source:
+      type: postgres
+      configuration:
+        host: elt-postgres
+        port: 5432
+        database: retails
+        username: postgres
+        password: <secret:postgres.config.password>
+        schemas:
+          - public
+        replication_method:
+          scan_changes_with_user_defined_cursor: {}
+        ssl_mode:
+          disable: {}
+        tunnel_method:
+          no_tunnel: {}
+    streams:
+      - name: lineitem
+        sync_mode: full_refresh_append
+      - name: orders
+        sync_mode: full_refresh_append
+  - name: customer_documents
+    source:
+      type: mongodb
+      configuration:
+        database_config:
+          self_managed_replica_set:
+            connection_string: mongodb://elt-mongodb:27017/?directConnection=true
+            database: retails
+    streams:
+      - name: customer
+        sync_mode: full_refresh_append
+      - name: partsupp
+        sync_mode: full_refresh_append
+  - name: part_api
+    source:
+      type: custom_api
+      configuration: {}
+    streams:
+      - name: part
+        sync_mode: full_refresh_append
+  - name: supplier_bucket
+    source:
+      type: s3
+      configuration:
+        bucket: retails-bucket
+        aws_access_key_id: test
+        aws_secret_access_key: <secret:aws_s3.AWS_SECRET_ACCESS_KEY>
+        endpoint: http://elt-localstack:4566
+        region_name: us-west-2
+        streams:
+          - name: region
+            globs:
+              - region.csv
+            format:
+              csv_format: {}
+          - name: supplier
+            globs:
+              - supplier.parquet
+            format:
+              parquet_format: {}
+    streams:
+      - name: region
+        sync_mode: full_refresh_append
+      - name: supplier
+        sync_mode: full_refresh_append
+  - name: nation_file
+    source:
+      type: file
+      configuration:
+        dataset_name: nation
+        format: jsonl
+        url: https://drive.google.com/uc?export=download&id=1bpJheSVxnPfDbWzWtGSgK8y6eQL81PPl
+        provider:
+          https_public_web:
+            user_agent: false
+    streams:
+      - name: nation
+        sync_mode: full_refresh_append

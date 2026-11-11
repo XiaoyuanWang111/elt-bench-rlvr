@@ -1,0 +1,10 @@
+foreign_keys:
+  - table: customer
+    column: c_nationkey
+    references: nation.n_nationkey
+  - table: supplier
+    column: s_nationkey
+    references: nation.n_nationkey
+  - table: orders
+    column: o_custkey
+    references: customer.c_custkey
