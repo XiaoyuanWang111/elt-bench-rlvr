@@ -1,7 +1,7 @@
 """Policies that need no model: a fixed script of assistant turns, and the script that solves a task.
 
 They drive the environment through the same token interface as a sampled model, so they exercise rendering, tool-call
-parsing, the tools and the grader. The integration tests and the ``--policy reference`` rollout use them.
+parsing, the tools and the grader. The integration tests and the ``policy=reference`` rollout use them.
 """
 
 import json
