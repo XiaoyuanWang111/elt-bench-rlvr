@@ -1,4 +1,4 @@
-## rollout 1 of rollout_tinker_trains_9381e7c: an inner join drops a train without cars
+## rollout 1 of rollout_tinker_trains_46c4824: an inner join drops a train without cars
 files: ['pipeline/extract_load.yaml', 'pipeline/models/trains.sql']
 extract-load: [('custom_api_cars', 'succeeded'), ('flat_file_train', 'succeeded')]
 seed 7: reward 0.3000 EL 1.0 T 0.0000 T on original data 1.0000 error None
@@ -9,7 +9,7 @@ seed 11: reward 0.3000 EL 1.0 T 0.0000 T on original data 1.0000 error None
 extract-load: [('custom_api_cars', 'succeeded'), ('flat_file_train', 'succeeded')]
 seed 13: reward 0.3000 EL 1.0 T 0.0000 T on original data 1.0000 error None
   columns not right: {"trains": ["train_id", "direction", "run_east_and_has_less_than_4_cars", "has_more_than_2_long_cars", "has_double_sided_cars_in_3rd_position", "has_rectangular_shaped_head_cars", "number_of_open_roof_car"]}
-## rollout_tinker_human_resources_9381e7c: NULL replaced by 0 in two columns
+## rollout_tinker_human_resources_46c4824: NULL replaced by 0 in two columns
 files: ['pipeline/extract_load.yaml', 'pipeline/models/locations.sql', 'pipeline/models/positions.sql']
 extract-load: [('human_resources_postgres', 'succeeded'), ('human_resources_s3', 'succeeded'), ('human_resources_file', 'succeeded')]
 seed 7: reward 0.9125 EL 1.0 T 0.8750 T on original data 1.0000 error None
@@ -20,7 +20,7 @@ seed 11: reward 0.9125 EL 1.0 T 0.8750 T on original data 1.0000 error None
 extract-load: [('human_resources_postgres', 'succeeded'), ('human_resources_s3', 'succeeded'), ('human_resources_file', 'succeeded')]
 seed 13: reward 0.9125 EL 1.0 T 0.8750 T on original data 1.0000 error None
   columns not right: {"positions": ["per_salary_over_20000", "avg_salary"], "locations": []}
-## rollout 0 of rollout_tinker_trains_9381e7c: correct SQL
+## rollout 0 of rollout_tinker_trains_46c4824: correct SQL
 files: ['pipeline/extract_load.yaml', 'pipeline/models/trains.sql']
 extract-load: [('custom_api_cars', 'succeeded'), ('file_train', 'succeeded')]
 seed 7: reward 1.0000 EL 1.0 T 1.0000 T on original data 1.0000 error None

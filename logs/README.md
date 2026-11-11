@@ -44,11 +44,11 @@ the samples can be drawn.
 
 `2_official/earlier/` holds rollouts sampled at earlier commits that the documents cite:
 
-- `rollout_tinker_trains_9381e7c.*` and `rollout_tinker_human_resources_9381e7c.*`. Rollout 1 on `trains` and the
+- `rollout_tinker_trains_46c4824.*` and `rollout_tinker_human_resources_46c4824.*`. Rollout 1 on `trains` and the
   rollout on `human_resources` match the benchmark's ground truth in every column (`official_transform` 1.0). The
   first joins trains to cars with an inner join; the second replaces NULL with 0 in `per_salary_over_20000` and
   `avg_salary`, whose descriptions do not ask for it. Rollout 0 on `trains` is correct.
-- `regrade_9381e7c.txt`: the files of the first two graded again with the code of commit 9381e7c, where a
+- `regrade_46c4824.txt`: the files of the first two graded again with the code of commit 46c4824, where a
   held-out sample was a random sample of rows, under the seeds 7, 11 and 13. The `trains` files earn 1.0, 0.3
   and 0.3; the `human_resources` files earn 1.0 three times (the sample of their own run held a position without
   employees, and they earned 0.91). Its first line was printed by a one-line script that names the checkout in
@@ -57,7 +57,7 @@ the samples can be drawn.
   scripts/regrade_transcript.py /path/to/ELT-Bench <task> <transcript> <rollout> 7 11 13`. A sample now takes
   the child rows of one parent row per foreign key away and moves the parent keys to other rows. The rewards are
   0.3, 0.91 and 1.0 under each of the three seeds.
-- `rollout_tinker_human_resources_b6dfd96.jsonl`: from commit b6dfd96, when `run_extract_load` still synced every
+- `rollout_tinker_human_resources_c4b0f0b.jsonl`: from commit c4b0f0b, when `run_extract_load` still synced every
   connection on every call and the default reward was the product `EL * (0.3 + 0.7 * T)`. The model loaded each
   table more than once (extract-load score 0) and reached a transform score of 0.25, which the product turned
   into reward 0.
