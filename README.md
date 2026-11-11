@@ -204,6 +204,10 @@ One process at a time should build a task's reference load or a new sync snapsho
 processes that start the same build at the same moment replace each other's namespace. Rollouts and held-out
 samples of different processes use namespaces of their own.
 
+A reference load and the sync snapshots stay in Snowflake and are reused by later processes, which assumes that
+the sources are not loaded again in between. After a source is loaded again (MongoDB gives the documents new
+`_id` values), drop the schemas `REFERENCE_<TASK>` of the tasks that read it and every `SYNC_CACHE_*` schema.
+
 ## 3. Tinker RL optimization step
 
 ```bash
