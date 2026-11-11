@@ -156,6 +156,36 @@ def test_model_table_of_the_wrong_size_is_never_fetched(local_tasks, warehouse, 
 # ---- raw tables that did not come from the sources -----------------------------------------------------------------
 
 
+def test_table_loaded_by_a_configuration_that_left_the_file_does_not_count(local_tasks, warehouse, workspace):
+    task = local_tasks["library"]
+    session = open_session(task, warehouse, workspace)
+
+    def wrong_separator(document):
+        members = next(c for c in document["connections"] if c["name"] == "members_file")
+        members["source"]["configuration"]["reader_options"] = '{"sep": ";"}'
+
+    def statuses(report):
+        return [connection["status"] for connection in report["connections"]]
+
+    wrong = edit_extract_load(task, wrong_separator)
+    write_pipeline(session, wrong, {})
+    assert statuses(session.run_extract_load()) == ["succeeded", "succeeded"]
+    write_pipeline(session, reference_extract_load(task), reference_models(task))
+    assert statuses(session.run_extract_load()) == ["succeeded", "unchanged"]
+    assert grade(session).source_tables == {"members": True, "loans": True}
+    # The file goes back to the configuration that loads one meaningless column. The table still holds the rows
+    # that the right configuration loaded.
+    write_pipeline(session, wrong, {})
+
+    result = grade(session)
+    report = session.run_extract_load()
+
+    assert result.source_tables == {"members": False, "loans": True}
+    # Applying the file loads what the file says: the table is not "already loaded with this configuration".
+    assert statuses(report) == ["succeeded", "unchanged"]
+    assert grade(session).source_tables == {"members": False, "loans": True}
+
+
 @pytest.mark.parametrize("change", ["remove_connection", "change_sync_mode", "delete_file"])
 def test_source_table_counts_only_if_the_submitted_file_is_what_loaded_it(change, local_tasks, warehouse, workspace):
     task = local_tasks["library"]

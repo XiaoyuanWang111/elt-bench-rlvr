@@ -78,7 +78,9 @@ class RolloutSession:
     tool_errors: int = 0
     environment_errors: int = 0
     """Connections that failed because of the environment (Airbyte, the network), not the configuration."""
-    loaded_streams: set[tuple[str, str, str, str]] = field(default_factory=set)
+    table_writers: dict[str, set[tuple[str, str, str, str]]] = field(default_factory=dict)
+    """For each raw table, by lower-cased name, the streams whose syncs its present rows come from. A sync that
+    overwrites the table becomes its only writer; any other sync adds one."""
     submitted: bool = False
 
     def __post_init__(self) -> None:
@@ -167,21 +169,27 @@ class RolloutSession:
         source = json.dumps([connection.source_type, connection.configuration], sort_keys=True, default=str)
         return (connection.name, source, stream.name, stream.sync_mode)
 
-    def submitted_source_tables(self) -> set[str]:
-        """Lower-cased names of the tables that the extract-load file, as it stands, has loaded.
+    @staticmethod
+    def _table_key(stream: StreamConfig) -> str:
+        return table_name_for_stream(stream.name).lower()
 
-        A stream counts if it has loaded from its connection with the source configuration and sync mode the file
-        gives it now. A stream that was removed from the file, or changed after its last sync, does not.
+    def submitted_source_tables(self) -> set[str]:
+        """Lower-cased names of the raw tables whose present rows the extract-load file, as it stands, describes.
+
+        A table counts if every stream that wrote its present rows is still in the file with the same connection
+        name, source configuration and sync mode. A table loaded by a stream that has since been removed from the
+        file or changed in it does not count, whatever the table holds.
         """
         try:
             connections = parse_extract_load((self.workspace / EXTRACT_LOAD_PATH).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return set()
+        described: dict[str, set[tuple[str, str, str, str]]] = {}
+        for connection in connections:
+            for stream in connection.streams:
+                described.setdefault(self._table_key(stream), set()).add(self._stream_key(connection, stream))
         return {
-            table_name_for_stream(stream.name).lower()
-            for connection in connections
-            for stream in connection.streams
-            if self._stream_key(connection, stream) in self.loaded_streams
+            table for table, writers in self.table_writers.items() if writers and writers <= described.get(table, set())
         }
 
     def _sync(self, connection: ConnectionConfig, pending: ConnectionConfig) -> dict[str, Any]:
@@ -208,7 +216,12 @@ class RolloutSession:
             if result.succeeded:
                 self.raw_tables.add(result.table)
                 self.model_tables.discard(result.table)
-                self.loaded_streams.add(self._stream_key(connection, streams[result.stream]))
+                stream = streams[result.stream]
+                key = self._stream_key(connection, stream)
+                if stream.sync_mode == "full_refresh_overwrite":
+                    self.table_writers[self._table_key(stream)] = {key}
+                else:
+                    self.table_writers.setdefault(self._table_key(stream), set()).add(key)
             entry = {"stream": result.stream, "table": result.table, "rows_loaded": result.rows_loaded}
             entry["status"] = "succeeded" if result.succeeded else "failed"
             if result.error:
@@ -228,10 +241,10 @@ class RolloutSession:
     def run_extract_load(self, connections: list[str] | None = None) -> dict[str, Any]:
         """Apply the extract-load file.
 
-        Without names, a stream that has already loaded from its connection with the current source configuration
-        and sync mode is left alone, the way ``terraform apply`` leaves an unchanged resource alone. A retry after
-        one connection failed therefore does not append the others a second time. Naming a connection syncs all of
-        its streams again.
+        Without names, a stream is skipped when the rows its table holds now were written by a sync of that
+        stream as the file describes it (same connection name, source configuration and sync mode), the way
+        ``terraform apply`` leaves an unchanged resource alone. A retry after one connection failed therefore does
+        not append the others a second time. Naming a connection syncs all of its streams again.
         """
         selected = connections
 
@@ -251,7 +264,8 @@ class RolloutSession:
                 streams = tuple(
                     stream
                     for stream in connection.streams
-                    if selected or self._stream_key(connection, stream) not in self.loaded_streams
+                    if selected
+                    or self._stream_key(connection, stream) not in self.table_writers.get(self._table_key(stream), ())
                 )
                 plan.append((connection, replace(connection, streams=streams) if streams else None))
             syncs = sum(pending is not None for _, pending in plan)
