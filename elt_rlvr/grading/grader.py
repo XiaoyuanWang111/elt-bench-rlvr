@@ -249,7 +249,9 @@ def _grade_or_zero(
     session: RolloutSession, reference: TaskReference, heldouts: _HeldOutSamples, config: RewardConfig
 ) -> Grade:
     try:
-        return _grade(session, reference, heldouts, config)
+        # A tool call cut off by the rollout's time limit may still be running in its thread.
+        with session.lock:
+            return _grade(session, reference, heldouts, config)
     except Exception as error:
         logger.exception("grading failed for %s", session.namespace)
         return Grade(0.0, 0.0, 0.0, grader_error=f"{type(error).__name__}: {error}")

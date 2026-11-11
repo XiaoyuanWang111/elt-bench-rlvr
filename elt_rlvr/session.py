@@ -9,6 +9,7 @@ import json
 import logging
 import math
 import shutil
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -82,6 +83,9 @@ class RolloutSession:
     """For each raw table, by lower-cased name, the streams whose syncs its present rows come from. A sync that
     overwrites the table becomes its only writer; any other sync adds one."""
     submitted: bool = False
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
+    """Held while a tool call runs. The grader and ``close`` take it, so they wait for a call that is still
+    running in its worker thread after the rollout was cut off by its time limit."""
 
     def __post_init__(self) -> None:
         self.workspace = self.workspace.resolve()
@@ -91,18 +95,20 @@ class RolloutSession:
 
     def close(self) -> None:
         """Drop the rollout's namespace and delete its workspace."""
-        self.warehouse.drop_namespace(self.namespace)
-        shutil.rmtree(self.workspace, ignore_errors=True)
+        with self.lock:
+            self.warehouse.drop_namespace(self.namespace)
+            shutil.rmtree(self.workspace, ignore_errors=True)
 
     def _call(self, tool: str, action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-        start = time.perf_counter()
-        try:
-            return action()
-        except (ToolError, PipelineError, SqlRejectedError, WarehouseError) as error:
-            self.tool_errors += 1
-            return {"error": str(error)}
-        finally:
-            self.timings.append(ToolTiming(tool, time.perf_counter() - start))
+        with self.lock:
+            start = time.perf_counter()
+            try:
+                return action()
+            except (ToolError, PipelineError, SqlRejectedError, WarehouseError) as error:
+                self.tool_errors += 1
+                return {"error": str(error)}
+            finally:
+                self.timings.append(ToolTiming(tool, time.perf_counter() - start))
 
     def _resolve(self, path: str) -> Path:
         if not isinstance(path, str) or "\x00" in path:

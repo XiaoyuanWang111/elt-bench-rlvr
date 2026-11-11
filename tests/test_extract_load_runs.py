@@ -1,6 +1,10 @@
 """What `run_extract_load` syncs: the whole file, only what is new, or the named connections again."""
 
-from support import edit_extract_load, grade, open_session, reference_models, write_pipeline
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+from support import edit_extract_load, grade, open_session, reference_models, solve, write_pipeline
 
 from elt_rlvr.extract_load.base import ConnectionRejectedError, ExtractLoadEngine
 from elt_rlvr.session import UNCHANGED_NOTE
@@ -174,3 +178,33 @@ def test_rejected_configuration_is_not_counted_as_an_environment_fault(local_tas
 
     assert report["connections"][0] == {"connection": "members_file", "status": "failed", "error": "no such host"}
     assert session.environment_errors == 0
+
+
+def test_grading_waits_for_a_tool_call_that_is_still_running(local_tasks, warehouse, workspace):
+    task = local_tasks["library"]
+    session = open_session(task, warehouse, workspace)
+    solve(session)
+    entered, release = threading.Event(), threading.Event()
+    inner = session.engine
+
+    class SlowEngine(ExtractLoadEngine):
+        def sync(self, connection, *, warehouse, namespace):
+            entered.set()
+            assert release.wait(10)
+            return inner.sync(connection, warehouse=warehouse, namespace=namespace)
+
+    session.engine = SlowEngine()
+
+    # The rollout's time limit cancels the awaiting task, not the worker thread that runs the sync.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        call = pool.submit(session.run_extract_load, ["members_file"])
+        assert entered.wait(10)
+        graded = pool.submit(grade, session)
+        time.sleep(0.5)
+        waited = not graded.done()
+        release.set()
+        call.result(10)
+        result = graded.result(30)
+
+    assert waited
+    assert result.reward == 1.0
