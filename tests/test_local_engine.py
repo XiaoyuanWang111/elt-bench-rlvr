@@ -312,3 +312,12 @@ def test_sync_source_whose_content_does_not_match_its_type_is_rejected(
 ):
     with pytest.raises(ConnectionRejectedError):
         _sync(engine, raw_warehouse, _connection((source_type, configuration), "people"))
+
+
+def test_sync_variant_tells_apart_two_source_directories(tmp_path):
+    connection = _connection(("file", {"dataset_name": "people", "format": "csv", "url": "people.csv"}), "people")
+
+    first, second = LocalEngine(tmp_path / "first"), LocalEngine(tmp_path / "second")
+
+    # The same configuration text names different files, so the sync cache must not serve one task's rows to another.
+    assert first.sync_variant(connection) != second.sync_variant(connection)

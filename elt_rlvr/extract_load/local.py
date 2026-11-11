@@ -95,8 +95,9 @@ class LocalEngine(ExtractLoadEngine):
     def __init__(self, sources_root: Path) -> None:
         self._sources_root = sources_root.resolve()
 
-    def source_types(self) -> tuple[str, ...]:
-        return tuple(REQUIRED_FIELDS)
+    def sync_variant(self, connection: ConnectionConfig) -> str:
+        # Locations in a configuration are relative to this directory, so the same text means other data elsewhere.
+        return str(self._sources_root)
 
     def _resolve(self, location: Any, *, what: str) -> Path:
         if not isinstance(location, str):
