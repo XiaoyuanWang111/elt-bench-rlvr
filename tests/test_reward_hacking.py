@@ -116,6 +116,26 @@ def test_failed_held_out_draw_fails_every_rollout_that_needs_the_samples(local_t
     assert all("held-out samples could not be drawn" in grade.grader_error for grade in grades)
 
 
+def test_model_table_of_the_wrong_size_is_never_fetched(local_tasks, warehouse, workspace, monkeypatch):
+    task = local_tasks["library"]
+    session = open_session(task, warehouse, workspace)
+    solve(session)
+    write_pipeline(session, None, {"member_activity": "select a.* from members a cross join members b"})
+    fetched = []
+    read_frame = warehouse.read_frame
+
+    def recording_read_frame(namespace, table):
+        fetched.append(namespace)
+        return read_frame(namespace, table)
+
+    monkeypatch.setattr(warehouse, "read_frame", recording_read_frame)
+
+    result = grade(session)
+
+    assert result.transform_score == 0.0
+    assert not [namespace for namespace in fetched if namespace.startswith("grade_")]
+
+
 # ---- raw tables that did not come from the sources -----------------------------------------------------------------
 
 

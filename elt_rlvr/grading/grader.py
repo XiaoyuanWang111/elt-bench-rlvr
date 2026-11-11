@@ -128,8 +128,13 @@ def _replay_models(
     models: Mapping[str, str],
     raw_table_namespaces: Mapping[str, str],
     namespace: str,
+    expected_rows: Mapping[str, int],
 ) -> dict[str, pd.DataFrame]:
-    """Run the submitted models in a fresh namespace and return the tables that were built, by lower-cased name."""
+    """Run the submitted models in a fresh namespace and return the required tables, by lower-cased name.
+
+    ``expected_rows`` gives the row count of each required table. A table is fetched only if it has that many
+    rows: one of another size is wrong whatever it holds, and a model can build one too large to fetch.
+    """
     warehouse = session.warehouse
     warehouse.create_namespace(namespace)
     try:
@@ -141,9 +146,12 @@ def _replay_models(
             timeout_seconds=session.limits.statement_timeout_seconds,
             describe_results=False,
         )
-        return {
-            result.name.lower(): warehouse.read_frame(namespace, result.name) for result in results if result.succeeded
-        }
+        frames = {}
+        for result in results:
+            rows = expected_rows.get(result.name.lower())
+            if result.succeeded and rows is not None and warehouse.row_count(namespace, result.name) == rows:
+                frames[result.name.lower()] = warehouse.read_frame(namespace, result.name)
+        return frames
     finally:
         warehouse.drop_namespace(namespace)
 
@@ -168,7 +176,11 @@ def _grade(session: RolloutSession, reference: TaskReference, heldouts: _HeldOut
         models = {}
     replay_namespace = f"grade_{session.namespace}"
     produced = _replay_models(
-        session, models, {table: session.namespace for table in session.raw_tables}, replay_namespace
+        session,
+        models,
+        {table: session.namespace for table in session.raw_tables},
+        replay_namespace,
+        {model.name.lower(): len(reference.expected(model.name)) for model in task.data_models},
     )
 
     matched: dict[str, set[str]] = {}
@@ -200,6 +212,7 @@ def _grade(session: RolloutSession, reference: TaskReference, heldouts: _HeldOut
                 models,
                 {table: heldout.namespace for table in task.source_tables},
                 f"{replay_namespace}_heldout_{index}",
+                {model.name.lower(): len(heldout.expected[model.name]) for model in task.data_models},
             )
             for model in task.data_models:
                 frame = produced_heldout.get(model.name.lower())
