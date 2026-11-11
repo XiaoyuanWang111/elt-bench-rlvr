@@ -146,6 +146,8 @@ def _replay_models(
             raw_table_namespaces=raw_table_namespaces,
             target_namespace=namespace,
             timeout_seconds=session.limits.statement_timeout_seconds,
+            # Only the required tables and what they read: other model files would cost time and prove nothing.
+            only=list(expected_rows),
             describe_results=False,
         )
         frames = {}

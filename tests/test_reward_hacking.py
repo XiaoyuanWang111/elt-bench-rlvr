@@ -119,6 +119,27 @@ def test_failed_held_out_draw_fails_the_whole_group(local_tasks, warehouse, work
     assert all("held-out samples could not be drawn" in grade.grader_error for grade in grades)
 
 
+def test_grader_builds_only_the_required_models(local_tasks, warehouse, workspace, monkeypatch):
+    task = local_tasks["library"]
+    session = open_session(task, warehouse, workspace)
+    solve(session)
+    write_pipeline(session, None, {"scratch": "select * from members", "scratch_too": "select * from scratch"})
+    built = set()
+    create = warehouse.create_table_from_query
+
+    def recording_create(namespace, name, sql, **options):
+        if namespace.startswith("grade_"):
+            built.add(name)
+        return create(namespace, name, sql, **options)
+
+    monkeypatch.setattr(warehouse, "create_table_from_query", recording_create)
+
+    result = grade(session)
+
+    assert result.reward == 1.0
+    assert built == {"member_activity"}
+
+
 @pytest.mark.parametrize("seed", [1, 2, 3])
 def test_every_held_out_sample_has_a_parent_that_lost_its_children(seed, local_tasks, warehouse, workspace):
     task = local_tasks["library"]
