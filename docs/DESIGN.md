@@ -1,7 +1,8 @@
 # ELT-Bench as a Tinker RLVR environment: implementation design
 
-Repository: https://github.com/XiaoyuanWang111/elt-bench-rlvr. Numbers come from runs whose commands and outputs
-are in its `logs/`. ELT-Bench is used at commit `fcf3129` (branch `elt_bench++`).
+Repository: [github.com/XiaoyuanWang111/elt-bench-rlvr](https://github.com/XiaoyuanWang111/elt-bench-rlvr).
+Numbers come from runs whose commands and outputs are in its `logs/`. ELT-Bench is used at commit `fcf3129`
+(branch `elt_bench++`).
 
 ## 1. The ELT task
 
@@ -45,8 +46,8 @@ the correct function of the source data: right on today's data and still right w
 
 A held-out sample keeps a random 70% of each table's rows, consistent with the foreign keys. It then takes all
 child rows away from one parent row per key, which tells an outer join from an inner one, and moves the key
-values of each parent table to other rows, which defeats values pasted per key. It is stricter than the
-benchmark on purpose: it grades cases the benchmark's data lacks, by the reference pipeline's reading of the
+values of each parent table to other rows, which defeats values pasted per key. This check is stricter than
+the benchmark on purpose: it grades cases the benchmark's data lacks, by the reference pipeline's reading of the
 column descriptions. Two rollouts sampled from Qwen3.6-35B-A3B match the ground truth in every column, one with
 an inner join that drops a train without cars (`trains`), one with NULL replaced by 0 in two columns whose
 description does not ask for it (`human_resources`). Under three seeds they earn 0.3 and 0.91 each time; with
@@ -62,7 +63,8 @@ sum pays 0.175.
 **Outcome or process reward.** A graded outcome reward. tinker-cookbook centres the reward within a group, so a
 group whose rollouts all score the same teaches nothing; graded rewards differ where pass-or-fail scores tie.
 The logged optimization steps had groups (1.0, 0.94, 0.94, 1.0) and (1.0, 1.0, 0.89, 0.95) on two local tasks
-and (0.0, 0.9) on the official task `trains`, whose other group, (0.9, 0.9), was dropped for that reason.
+and (0.0, 0.9) on the official task `trains`, whose other group, (0.9, 0.9), tinker-cookbook dropped because
+its two rewards were equal.
 Milestones that execution can verify (a table loaded, a column right) are already in the outcome reward, and
 paying them earlier would not change a per-trajectory advantage. A bonus for an event such as "a sync
 succeeded" can be collected by repeating the event, so there is none.
@@ -79,8 +81,8 @@ cookbook's rollout loop with a scripted policy that emits tokens. The official p
 Snowflake: the loader reads all 100 tasks, and on three tasks that cover the five source kinds a reference
 pipeline earns 1.0 against the benchmark's ground truth. One benchmark defect surfaced: ELT-Bench's REST API
 server ignores the page parameters, and its Airbyte connector asks for pages until one has fewer than 9,973
-rows, so a sync of a larger table did not end (40 API tables in 30 tasks are that large). The logged `app_store`
-run uses the connector without its paginator (README).
+rows, so the sync of a table with at least that many rows did not end (40 API tables in 30 tasks). The logged
+`app_store` run uses the connector without its paginator (README).
 
 ## 4. Reward hacking
 
